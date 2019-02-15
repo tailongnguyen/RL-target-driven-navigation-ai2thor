@@ -4,8 +4,9 @@
     "resolution": [224, 224],
     "history_size": 4,
     "anti-collision": 1,
-    "embeddings": "/home/yoshi/thesis/current-project/embedding_fasttext300.pkl", 
-    "dump_path": "/home/yoshi/thesis/current-project/env/dumped/",
+    "embeddings": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_fasttext300.pkl", 
+    "dump_path": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/env/dumped/",
+    "train_resnet": 0,
     "rooms": {
         "Kitchens":{
             "scenes": ["FloorPlan1",

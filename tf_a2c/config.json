@@ -1,6 +1,6 @@
 {
    "num_task": 1,
-   "num_epochs": 3000,
+   "num_epochs": 5000,
    "num_episodes": 16,
    "num_iters": 100,
    "gamma": 0.99,

@@ -20,20 +20,20 @@ class MultitaskPolicy(object):
 		self.config = config
 		self.custom_config = custom_config
 
-		self.use_gae = custom_config.get('use_gae') or config['use_gae']
-		self.num_task = custom_config.get('num_task') or config['num_task']
-		self.num_epochs = custom_config.get('num_epochs') or config['num_epochs']
-		self.num_episodes = custom_config.get('num_episodes') or config['num_episodes']
-		self.num_iters = custom_config.get('num_iters') or config['num_iters']
-		self.gamma = custom_config.get('gamma') or config['gamma']
-		self.lamb = custom_config.get('lamb') or config['lamb']
-		self.lr = custom_config.get('lr') or config['lr']
-		self.joint_loss = custom_config.get('joint_loss') or config['joint_loss']
-		self.ec = custom_config.get('ec') or config['ec']
-		self.vc = custom_config.get('vc') or config['vc']
-		self.max_grad_norm = custom_config.get('max_gradient_norm') or config['max_gradient_norm']
-		self.decay = custom_config.get('decay') or config['decay']
-		self.reuse = custom_config.get('share_latent') or config['share_latent']
+		self.use_gae = custom_config.get('use_gae') if custom_config.get('use_gae') is not None else config['use_gae']
+		self.num_task = custom_config.get('num_task') if custom_config.get('num_task') is not None else config['num_task']
+		self.num_epochs = custom_config.get('num_epochs') if custom_config.get('num_epochs') is not None else config['num_epochs']
+		self.num_episodes = custom_config.get('num_episodes') if custom_config.get('num_episodes') is not None else config['num_episodes']
+		self.num_iters = custom_config.get('num_iters') if custom_config.get('num_iters') is not None else config['num_iters']
+		self.gamma = custom_config.get('gamma') if custom_config.get('gamma') is not None else config['gamma']
+		self.lamb = custom_config.get('lamb') if custom_config.get('lamb') is not None else config['lamb']
+		self.lr = custom_config.get('lr') if custom_config.get('lr') is not None else config['lr']
+		self.joint_loss = custom_config.get('joint_loss') if custom_config.get('joint_loss') is not None else config['joint_loss']
+		self.ec = custom_config.get('ec') if custom_config.get('ec') is not None else config['ec']
+		self.vc = custom_config.get('vc') if custom_config.get('vc') is not None else config['vc']
+		self.max_grad_norm = custom_config.get('max_gradient_norm') if custom_config.get('max_gradient_norm') is not None else config['max_gradient_norm']
+		self.decay = custom_config.get('decay') if custom_config.get('decay') is not None else config['decay']
+		self.reuse = custom_config.get('share_latent') if custom_config.get('share_latent') is not None else config['share_latent']
 
 		assert len(training_objects) >= self.num_task, "Each task should have an unique target."
 
@@ -69,7 +69,7 @@ class MultitaskPolicy(object):
 
 		self.saver = tf.train.Saver()
 		
-		log_folder = custom_config.get('logging') or config['logging']
+		log_folder = custom_config.get('logging') if custom_config.get('logging') is not None else config['logging']
 		self.writer = tf.summary.FileWriter(log_folder)
 		
 		test_name =  "{}_{}".format(training_scene, "_".join(training_objects[:self.num_task]))

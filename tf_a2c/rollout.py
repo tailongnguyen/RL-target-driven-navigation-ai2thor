@@ -13,8 +13,8 @@ class Rollout(object):
 		self.config = config
 		self.custom_config = custom_config
 		
-		self.num_task = custom_config.get('num_task') or config['num_task']
-		self.num_episodes = custom_config.get('num_episodes') or config['num_episodes']
+		self.num_task = custom_config.get('num_task') if custom_config.get('num_task') is not None else config['num_task']
+		self.num_episodes = custom_config.get('num_episodes') if custom_config.get('num_episodes') is not None else config['num_episodes']
 
 		self.training_scene = training_scene
 		self.training_objects = training_objects

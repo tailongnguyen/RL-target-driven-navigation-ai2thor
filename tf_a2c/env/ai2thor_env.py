@@ -7,7 +7,6 @@ import os
 import sys
 import random
 
-from skimage import transform
 from copy import deepcopy
 from gym import error, spaces
 from gym.utils import seeding
@@ -35,8 +34,8 @@ class AI2ThorDumpEnv():
         self.config = config
         self.scene = scene
         self.target = target
-        self.history_size = custom_config.get('history_size') or config['history_size']
-        self.train_resnet = custom_config.get('train_resnet') or config['train_resnet']
+        self.history_size = custom_config.get('history_size') if custom_config.get('history_size') is not None else config['history_size']
+        self.train_resnet = custom_config.get('train_resnet') if custom_config.get('train_resnet') is not None else config['train_resnet']
 
         self.h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], self.scene)), 'r')
 

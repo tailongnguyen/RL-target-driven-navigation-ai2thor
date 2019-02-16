@@ -142,7 +142,11 @@ if __name__ == '__main__':
 	config = json.load(open("config.json"))
 	kitchen_scenes = config['rooms']['Kitchens']['scenes']
 
-	for scene in kitchen_scenes[:1]:
-		print("Dumping {}".format(scene))
-		# dump(scene, config['resolution'])
-		dump_resnet(scene)
+	# for scene in kitchen_scenes[:1]:
+	# 	print("Dumping {}".format(scene))
+	# 	# dump(scene, config['resolution'])
+	# 	dump_resnet(scene)
+
+	scene = "FloorPlan28"
+	dump(scene, config['resolution'])
+	dump_resnet(scene)

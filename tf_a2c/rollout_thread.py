@@ -14,8 +14,8 @@ class RolloutThread(object):
 		custom_config):
 	
 		self.task = task
-		self.noise_argmax = custom_config.get('noise_argmax') or config['noise_argmax']
-		self.num_iters = custom_config.get('num_iters') or config['num_iters']
+		self.noise_argmax = custom_config.get('noise_argmax') if custom_config.get('noise_argmax') is not None else config['noise_argmax']
+		self.num_iters = custom_config.get('num_iters') if custom_config.get('num_iters') is not None else config['num_iters']
 
 		self.policy = policy
 		self.env = AI2ThorDumpEnv(scene, objects[task], config, custom_config)

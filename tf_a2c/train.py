@@ -2,6 +2,9 @@ import tensorflow as tf
 import numpy as np      			
 import os
 import sys 
+import json
+import time
+from datetime import datetime
 
 from model import *
 from rollout import Rollout
@@ -14,31 +17,31 @@ class MultitaskPolicy(object):
 			training_scene,
 			training_objects,
 			config,
-			custom_config
+			arguments
 			):
 
 		self.config = config
-		self.custom_config = custom_config
+		self.arguments = arguments
 
-		self.use_gae = custom_config.get('use_gae') if custom_config.get('use_gae') is not None else config['use_gae']
-		self.num_task = custom_config.get('num_task') if custom_config.get('num_task') is not None else config['num_task']
-		self.num_epochs = custom_config.get('num_epochs') if custom_config.get('num_epochs') is not None else config['num_epochs']
-		self.num_episodes = custom_config.get('num_episodes') if custom_config.get('num_episodes') is not None else config['num_episodes']
-		self.num_iters = custom_config.get('num_iters') if custom_config.get('num_iters') is not None else config['num_iters']
-		self.gamma = custom_config.get('gamma') if custom_config.get('gamma') is not None else config['gamma']
-		self.lamb = custom_config.get('lamb') if custom_config.get('lamb') is not None else config['lamb']
-		self.lr = custom_config.get('lr') if custom_config.get('lr') is not None else config['lr']
-		self.joint_loss = custom_config.get('joint_loss') if custom_config.get('joint_loss') is not None else config['joint_loss']
-		self.ec = custom_config.get('ec') if custom_config.get('ec') is not None else config['ec']
-		self.vc = custom_config.get('vc') if custom_config.get('vc') is not None else config['vc']
-		self.max_grad_norm = custom_config.get('max_gradient_norm') if custom_config.get('max_gradient_norm') is not None else config['max_gradient_norm']
-		self.decay = custom_config.get('decay') if custom_config.get('decay') is not None else config['decay']
-		self.reuse = custom_config.get('share_latent') if custom_config.get('share_latent') is not None else config['share_latent']
+		self.use_gae = arguments.get('use_gae')
+		self.num_task = arguments.get('num_task')
+		self.num_epochs = arguments.get('num_epochs')
+		self.num_episodes = arguments.get('num_episodes')
+		self.num_iters = arguments.get('num_iters')
+		self.gamma = arguments.get('gamma')
+		self.lamb = arguments.get('lamb')
+		self.lr = arguments.get('lr')
+		self.joint_loss = arguments.get('joint_loss')
+		self.ec = arguments.get('ec')
+		self.vc = arguments.get('vc')
+		self.max_grad_norm = arguments.get('max_gradient_norm')
+		self.decay = arguments.get('decay')
+		self.reuse = arguments.get('share_latent')
 
 		assert len(training_objects) >= self.num_task, "Each task should have an unique target."
 
-		self.env = AI2ThorDumpEnv(training_scene, training_objects[0], config, custom_config)
-		self.rollout = Rollout(training_scene, training_objects, config, custom_config)
+		self.env = AI2ThorDumpEnv(training_scene, training_objects[0], config, arguments)
+		self.rollout = Rollout(training_scene, training_objects, config, arguments)
 
 		tf.reset_default_graph()
 
@@ -53,7 +56,7 @@ class MultitaskPolicy(object):
 							joint_loss=self.joint_loss,
 							learning_rate=self.lr,
 							decay=self.decay,
-							reuse=self.reuse
+							reuse=bool(self.reuse)
 							)
 
 			if self.decay:
@@ -62,18 +65,20 @@ class MultitaskPolicy(object):
 			print("\nInitialized network {}, with {} trainable weights.".format('A2C_' + str(i), len(policy_i.find_trainable_variables('A2C_' + str(i), True))))
 			self.PGNetwork.append(policy_i)
 
-		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.2)
+		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.15)
 
 		self.sess = tf.Session(config = tf.ConfigProto(gpu_options = gpu_options))
 		self.sess.run(tf.global_variables_initializer())
 
 		self.saver = tf.train.Saver()
 		
-		log_folder = custom_config.get('logging') if custom_config.get('logging') is not None else config['logging']
-		self.writer = tf.summary.FileWriter(log_folder)
+		timer = str(datetime.now()).replace(" ", "-").replace(".", "-")
+		self.log_folder = os.path.join(arguments.get('logging'), timer)
+		self.writer = tf.summary.FileWriter(self.log_folder)
 		
-		test_name =  "{}_{}".format(training_scene, "_".join(training_objects[:self.num_task]))
-		tf.summary.scalar(test_name + "/rewards", tf.reduce_mean([policy.mean_reward for policy in self.PGNetwork], 0))
+		test_name =  training_scene
+		for i in range(self.num_task):
+			tf.summary.scalar(test_name + "/" + training_objects[i], self.PGNetwork[i].mean_reward)
 
 		self.write_op = tf.summary.merge_all()
 
@@ -236,6 +241,7 @@ class MultitaskPolicy(object):
 	def train(self):
 		total_samples = {}
 
+		start = time.time()
 		for epoch in range(self.num_epochs):
 			# sys.stdout.flush()
 			
@@ -249,7 +255,7 @@ class MultitaskPolicy(object):
 			rewards = self._make_batch(self.sess)
 			#---------------------------------------------------------------------------------------------------------------------#	
 
-			print('epoch {}/{}'.format(epoch + 1, self.num_epochs), end = '\r', flush = True)
+			print('Time elapsed: {:.3f}, epoch {}/{}'.format((time.time() - start)/3600, epoch + 1, self.num_epochs), end = '\r', flush = True)
 		
 			sum_dict = {}
 			for task_idx in range(self.num_task):
@@ -266,7 +272,8 @@ class MultitaskPolicy(object):
 																			)
 
 
-				sum_dict[self.PGNetwork[task_idx].mean_reward] = np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
+				sum_dict[self.PGNetwork[task_idx].mean_reward] = \
+							np.sum(np.concatenate(rewards[task_idx])) / len(rewards[task_idx])
 
 				if task_idx not in total_samples:
 					total_samples[task_idx] = 0
@@ -287,6 +294,8 @@ class MultitaskPolicy(object):
 		self.sess.close()
 		# SAVE MODEL
 		#---------------------------------------------------------------------------------------------------------------------#	
-		
-			
+		with open(self.log_folder + '/arguments.json', 'w') as outfile:
+		    json.dump(self.arguments, outfile)
+
+		print("Elapsed time: {}".format((time.time() - start)/3600))	
 		#---------------------------------------------------------------------------------------------------------------------#		

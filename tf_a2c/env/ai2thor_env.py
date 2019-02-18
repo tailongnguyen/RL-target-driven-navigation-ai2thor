@@ -23,7 +23,7 @@ class AI2ThorDumpEnv():
     """
     Wrapper base class
     """
-    def __init__(self, scene, target, config, custom_config=dict(), seed=None):
+    def __init__(self, scene, target, config, arguments=dict(), seed=None):
         """
         :param seed: (int)   Random seed
         :param config: (str)   Dictionary file storing cofigurations
@@ -34,8 +34,8 @@ class AI2ThorDumpEnv():
         self.config = config
         self.scene = scene
         self.target = target
-        self.history_size = custom_config.get('history_size') if custom_config.get('history_size') is not None else config['history_size']
-        self.train_resnet = custom_config.get('train_resnet') if custom_config.get('train_resnet') is not None else config['train_resnet']
+        self.history_size = arguments.get('history_size')
+        self.train_resnet = arguments.get('train_resnet')
 
         self.h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], self.scene)), 'r')
 

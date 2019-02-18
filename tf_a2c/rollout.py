@@ -8,13 +8,13 @@ class Rollout(object):
 		training_scene, 
 		training_objects,
 		config,
-		custom_config):
+		arguments):
 		
 		self.config = config
-		self.custom_config = custom_config
+		self.arguments = arguments
 		
-		self.num_task = custom_config.get('num_task') if custom_config.get('num_task') is not None else config['num_task']
-		self.num_episodes = custom_config.get('num_episodes') if custom_config.get('num_episodes') is not None else config['num_episodes']
+		self.num_task = arguments.get('num_task')
+		self.num_episodes = arguments.get('num_episodes')
 
 		self.training_scene = training_scene
 		self.training_objects = training_objects
@@ -24,7 +24,7 @@ class Rollout(object):
 
 	def _rollout_process(self, task, index, current_policy):
 		thread_rollout = RolloutThread(scene=self.training_scene, objects=self.training_objects, task=task,
-									policy=current_policy, config=self.config, custom_config=self.custom_config)
+									policy=current_policy, config=self.config, arguments=self.arguments)
 
 		ep_states, ep_tasks, ep_actions, ep_rewards, ep_next_states = thread_rollout.rollout()
 		

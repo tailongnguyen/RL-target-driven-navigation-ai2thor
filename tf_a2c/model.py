@@ -6,22 +6,24 @@ from utils import openai_entropy, mse, LearningRateDecay
 
 HIDDEN_SIZE = 512
 class Actor():
-    def __init__(self, state_size, action_size, reuse = False):
+    def __init__(self, state_size, action_size, history_size=1, reuse = False):
         self.state_size = state_size
         self.action_size = action_size
 
         with tf.variable_scope('Actor' if not reuse else "ShareLatent"):
-            self.inputs = tf.placeholder(tf.float32, [None, self.state_size])
+            self.inputs = tf.placeholder(tf.float32, [None, history_size, self.state_size])
             self.actions = tf.placeholder(tf.int32, [None, self.action_size])
             self.advantages = tf.placeholder(tf.float32, [None, ])
 
-            self.W_fc1 = self._fc_weight_variable([self.state_size, 512], name = "W_fc1")
-            self.b_fc1 = self._fc_bias_variable([512], self.state_size, name = "b_fc1")
-            self.fc1 = tf.nn.relu(tf.matmul(self.inputs, self.W_fc1) + self.b_fc1)
+            self.inputs_flat = tf.reshape(self.inputs, [-1, self.state_size * history_size])
+
+            self.W_fc1 = self._fc_weight_variable([self.state_size * history_size, HIDDEN_SIZE], name = "W_fc1")
+            self.b_fc1 = self._fc_bias_variable([HIDDEN_SIZE], self.state_size, name = "b_fc1")
+            self.fc1 = tf.nn.relu(tf.matmul(self.inputs_flat, self.W_fc1) + self.b_fc1)
 
         with tf.variable_scope("Actions"):
-            self.W_fc2 = self._fc_weight_variable([512, self.action_size], name = "W_fc2")
-            self.b_fc2 = self._fc_bias_variable([self.action_size], 512, name = "b_fc2")
+            self.W_fc2 = self._fc_weight_variable([HIDDEN_SIZE, self.action_size], name = "W_fc2")
+            self.b_fc2 = self._fc_bias_variable([self.action_size], HIDDEN_SIZE, name = "b_fc2")
 
         self.logits = tf.matmul(self.fc1, self.W_fc2) + self.b_fc2
 
@@ -44,20 +46,21 @@ class Actor():
 
 
 class Critic():
-    def __init__(self, state_size, reuse = False):
+    def __init__(self, state_size, history_size=1, reuse = False):
         self.state_size = state_size
 
         with tf.variable_scope('Critic' if not reuse else "ShareLatent" , reuse  = reuse):
-            self.inputs = tf.placeholder(tf.float32, [None, self.state_size])
+            self.inputs = tf.placeholder(tf.float32, [None, history_size, self.state_size])
             self.returns = tf.placeholder(tf.float32, [None, ])
 
-            self.W_fc1 = self._fc_weight_variable([self.state_size, 512], name = "W_fc1")
-            self.b_fc1 = self._fc_bias_variable([512], self.state_size, name = "b_fc1")
-            self.fc1 = tf.nn.relu(tf.matmul(self.inputs, self.W_fc1) + self.b_fc1)
+            self.inputs_flat = tf.reshape(self.inputs, [-1, self.state_size * history_size])
+            self.W_fc1 = self._fc_weight_variable([self.state_size * history_size, HIDDEN_SIZE], name = "W_fc1")
+            self.b_fc1 = self._fc_bias_variable([HIDDEN_SIZE], self.state_size, name = "b_fc1")
+            self.fc1 = tf.nn.relu(tf.matmul(self.inputs_flat, self.W_fc1) + self.b_fc1)
 
         with tf.variable_scope("Value", reuse = False):
-            self.W_fc2 = self._fc_weight_variable([512, 1], name = "W_fc3")
-            self.b_fc2 = self._fc_bias_variable([1], 512, name = "b_fc3")
+            self.W_fc2 = self._fc_weight_variable([HIDDEN_SIZE, 1], name = "W_fc3")
+            self.b_fc2 = self._fc_bias_variable([1], HIDDEN_SIZE, name = "b_fc3")
 
             self.value = tf.matmul(self.fc1, self.W_fc2) + self.b_fc2
             
@@ -81,6 +84,7 @@ class A2C():
                 name, 
                 state_size, 
                 action_size, 
+                history_size,
                 entropy_coeff, 
                 value_function_coeff, 
                 max_gradient_norm, 
@@ -107,8 +111,8 @@ class A2C():
         self.entropy_summary = tf.placeholder(tf.float32)
         
         with tf.variable_scope(name):
-            self.actor = Actor(state_size=self.state_size, action_size=self.action_size, reuse=self.reuse)
-            self.critic = Critic(state_size=self.state_size, reuse=self.reuse)
+            self.actor = Actor(state_size=self.state_size, action_size=self.action_size, history_size=history_size, reuse=self.reuse)
+            self.critic = Critic(state_size=self.state_size, history_size=history_size, reuse=self.reuse)
 
         self.learning_rate = tf.placeholder(tf.float32, [])
         self.fixed_lr = learning_rate

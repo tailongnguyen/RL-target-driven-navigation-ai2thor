@@ -6,49 +6,62 @@ class RolloutThread(object):
 	
 	def __init__(
 		self,
+		sess,
 		scene, 
-		objects,
-		task,
+		target,
 		policy, 
 		config,
 		arguments):
-	
-		self.task = task
+		
+		self.sess = sess
 		self.noise_argmax = arguments.get('noise_argmax')
 		self.num_iters = arguments.get('num_iters')
 
 		self.policy = policy
-		self.env = AI2ThorDumpEnv(scene, objects[task], config, arguments)
+		self.env = AI2ThorDumpEnv(scene, target, config, arguments)
 
 	def rollout(self):
-		states, tasks, actions, rewards_of_episode, next_states = [], [], [], [], []
+		states, logits, actions, rewards, values, last_value = [], [], [], [], [], []
 		
 		state, target = self.env.reset()
 		step = 0
 
 		while True:
+			logit, p, v = self.sess.run(
+							[self.policy.actor.logits, self.policy.actor.pi, self.policy.critic.value], 
+							feed_dict={
+								self.policy.actor.inputs: [state],
+								self.policy.critic.inputs: [state]
+							})
 
 			if self.noise_argmax:
-				logit = self.policy[self.env.current_state_id, self.task, 0]
 				action = noise_and_argmax(logit)
 			else:
-				pi = self.policy[self.env.current_state_id, self.task, 1]
 				action = np.random.choice(range(len(pi)), p = np.array(pi)/ np.sum(pi))  # select action w.r.t the actions prob
 
-			states.append(self.env.current_state_id)
+			states.append(state)
 			next_state, reward, done = self.env.step(action)
 			
 			# Store results
-			tasks.append(self.task)
+			logits.append(logit[0])
 			actions.append(action)
-			rewards_of_episode.append(reward)
+			rewards.append(reward)
+			values.append(v)
 
 			state = next_state
-			next_states.append(self.env.current_state_id)
 
 			step += 1
 
 			if done or step > self.num_iters:   
 				break
 
-		return states, tasks, actions, rewards_of_episode, next_states
+		if not done:
+			last_value = self.sess.run(
+							self.policy.critic.value, 
+							feed_dict={
+								self.policy.critic.inputs: [state]
+							})[0]
+		else:
+			last_value = None
+
+		return states, logits, actions, rewards, values, last_value

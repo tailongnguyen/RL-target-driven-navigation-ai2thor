@@ -11,14 +11,6 @@ from copy import deepcopy
 from gym import error, spaces
 from gym.utils import seeding
 
-ALL_POSSIBLE_ACTIONS = [
-    'MoveAhead',
-    'MoveBack',
-    'RotateRight',
-    'RotateLeft',
-    # 'Stop'   
-]
-
 class AI2ThorDumpEnv():
     """
     Wrapper base class
@@ -41,7 +33,7 @@ class AI2ThorDumpEnv():
 
         all_visible_objects = set(",".join([o for o in list(self.h5_file['visible_objects']) if o != '']).split(','))
         
-        assert self.target in all_visible_objects, "Target {} is unreachable in !".format(self.target, self.scene)
+        assert self.target in all_visible_objects, "Target {} is unreachable in {}!".format(self.target, self.scene)
 
         self.states = self.h5_file['locations'][()]
         self.graph = self.h5_file['graph'][()]
@@ -49,7 +41,7 @@ class AI2ThorDumpEnv():
         self.visible_objects = self.h5_file['visible_objects'][()]
 
         self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
-
+        
         self.action_space = self.graph.shape[1]
         self.cv_action_onehot = np.identity(self.action_space)
         
@@ -95,7 +87,7 @@ class AI2ThorDumpEnv():
 
         reward, done = self.transition_reward(collided)
 
-        self.tiled_states()
+        self.update_states()
 
         return self.history_states, reward, done
 
@@ -113,21 +105,18 @@ class AI2ThorDumpEnv():
     def reset(self):
         # reset parameters
         self.current_state_id = random.randrange(self.states.shape[0])
-        self.tiled_states()
+        self.update_states()
         self.terminal = False
 
         return self.history_states, self.target
 
-    def tiled_states(self):
+    def update_states(self):
         if self.train_resnet:
             o = self.observations[self.current_state_id]
             self.history_states = np.append(self.history_states[1:, :], np.expand_dims(o, 0), 0)
         else:
             f = self.features[self.current_state_id]
             self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
-
-    def render(self, mode='human'):
-        raise NotImplementedError
 
     def seed(self, seed=None):
         self.np_random, seed1 = seeding.np_random(seed)

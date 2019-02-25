@@ -47,14 +47,12 @@ def main(config, arguments):
 	# trainable_objects = ['CoffeeMachine', 'Sink']
 	training_object = trainable_objects[arguments['scene_id']][arguments['target_id']]
 
-	print("Training scene: {} | Target: {}".format(training_scene, [training_object]))
-	multitask_agent = MultitaskPolicy(training_scene, [training_object], config, arguments)
+	print("Training scene: {} | Target: {}".format(training_scene, training_object))
+	multitask_agent = MultitaskPolicy(training_scene, training_object, config, arguments)
 	multitask_agent.train()
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Arguments')
-	parser.add_argument('--num_task', nargs='?', type=int, default=1, 
-						help='Number of tasks to train on')
 	parser.add_argument('--share_latent', nargs='?', type=int, default=0,
 						help='Whether to join the latent spaces of actor and critic')
 	parser.add_argument('--num_episodes', nargs='?', type=int, default=16,
@@ -65,7 +63,7 @@ if __name__ == '__main__':
 						help='Learning rate')
 	parser.add_argument('--use_gae', nargs='?', type=int, default=1,
 						help='Whether to use generalized advantage estimate')
-	parser.add_argument('--num_epochs', nargs='?', type=int, default=15000,
+	parser.add_argument('--num_epochs', nargs='?', type=int, default=10000,
 						help='Number of epochs to train')
 	parser.add_argument('--gamma', nargs='?', type=float, default=0.99,
 						help='Coeff for return estimation')
@@ -77,9 +75,9 @@ if __name__ == '__main__':
 						help='Value loss coeff in total loss')
 	parser.add_argument('--max_gradient_norm', nargs='?', type=float, default=None,
 						help='')
-	parser.add_argument('--train-resnet', type=int, default=0,
+	parser.add_argument('--train_resnet', type=int, default=0,
 						help='whether to include resnet into training')
-	parser.add_argument('--history-size', type=int, default=1,
+	parser.add_argument('--history_size', type=int, default=1,
 						help='whether to include resnet into training')
 	parser.add_argument('--decay', nargs='?', type=int, default=1,
 						help='Whether to decay the learning_rate')

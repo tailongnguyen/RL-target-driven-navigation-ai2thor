@@ -6,46 +6,45 @@ class Rollout(object):
 	def __init__(
 		self,
 		training_scene, 
-		training_objects,
+		training_object,
 		config,
 		arguments):
 		
 		self.config = config
 		self.arguments = arguments
 		
-		self.num_task = arguments.get('num_task')
 		self.num_episodes = arguments.get('num_episodes')
 
 		self.training_scene = training_scene
-		self.training_objects = training_objects
+		self.training_object = training_object
 
-		self.states, self.tasks, self.actions, self.rewards, self.next_states = \
-										[self.holder_factory(self.num_task, self.num_episodes) for i in range(5)]
+		self.states, self.logits, self.actions, self.rewards, self.values, self.last_values = \
+										[self.holder_factory(self.num_episodes) for i in range(6)]
 
-	def _rollout_process(self, task, index, current_policy):
-		thread_rollout = RolloutThread(scene=self.training_scene, objects=self.training_objects, task=task,
-									policy=current_policy, config=self.config, arguments=self.arguments)
+	def _rollout_process(self, index, sess, policy):
+		thread_rollout = RolloutThread(sess=sess, scene=self.training_scene, target=self.training_object,
+										policy=policy, config=self.config, arguments=self.arguments)
 
-		ep_states, ep_tasks, ep_actions, ep_rewards, ep_next_states = thread_rollout.rollout()
+		ep_states, ep_logits, ep_actions, ep_rewards, ep_values, ep_last_value = thread_rollout.rollout()
 		
-		self.states[task][index] = ep_states
-		self.tasks[task][index] = ep_tasks
-		self.actions[task][index] = ep_actions
-		self.rewards[task][index] = ep_rewards
-		self.next_states[task][index] = ep_next_states
+		self.states[index] = ep_states
+		self.logits[index] = ep_logits
+		self.actions[index] = ep_actions
+		self.rewards[index] = ep_rewards
+		self.values[index] = ep_values
+		self.last_values[index] = ep_last_value
 
-	def holder_factory(self, num_task, num_episodes):
-		return [ [ [] for j in range(num_episodes)] for i in range(num_task) ]
+	def holder_factory(self, num_episodes):
+		return [[] for j in range(num_episodes)] 
 
-	def rollout_batch(self, current_policy):
-		self.states, self.tasks, self.actions, self.rewards, self.next_states = \
-										[self.holder_factory(self.num_task, self.num_episodes) for i in range(5)]
+	def rollout_batch(self, sess, policy):
+		self.states, self.logits, self.actions, self.rewards, self.values, self.last_values = \
+										[self.holder_factory(self.num_episodes) for i in range(6)]
 
 		train_threads = []
 		
-		for task in range(self.num_task):
-			for i in range(self.num_episodes):
-				train_threads.append(threading.Thread(target=self._rollout_process, args=(task, i, current_policy, )))
+		for i in range(self.num_episodes):
+			train_threads.append(threading.Thread(target=self._rollout_process, args=(i, sess, policy, )))
 
 		# start each training thread
 		for t in train_threads:
@@ -55,4 +54,4 @@ class Rollout(object):
 		for t in train_threads:
 			t.join()		
 
-		return self.states, self.tasks, self.actions, self.rewards, self.next_states
+		return self.states, self.logits, self.actions, self.rewards, self.values, self.last_values

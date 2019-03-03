@@ -9,7 +9,8 @@ class RolloutThread(object):
 		sess,
 		scene, 
 		target,
-		policy, 
+		policy,
+		embeddings, 
 		config,
 		arguments):
 		
@@ -20,30 +21,52 @@ class RolloutThread(object):
 		self.policy = policy
 		self.env = AI2ThorDumpEnv(scene, target, config, arguments)
 
-	def rollout(self):
-		states, logits, actions, rewards, values, last_value = [], [], [], [], [], []
+		if embeddings is not None:
+			assert target in embeddings, "Target has no embedding."
+			self.task_input = embeddings[target].tolist()
+
+		self.embeddings = embeddings
+
+	def rollout(self, return_state_ids=False):
+		states, pis, actions, rewards, values, last_value = [], [], [], [], [], []
 		
 		state, target = self.env.reset()
+		start = self.env.current_state_id
 		step = 0
 
 		while True:
-			logit, p, v = self.sess.run(
+			if self.embeddings is not None:
+				logit, p, v = self.sess.run(
 							[self.policy.actor.logits, self.policy.actor.pi, self.policy.critic.value], 
 							feed_dict={
 								self.policy.actor.inputs: [state],
+								self.policy.actor.task_input: [self.task_input],
+								self.policy.critic.task_input: [self.task_input],
 								self.policy.critic.inputs: [state]
 							})
+			else:	
+				logit, p, v = self.sess.run(
+								[self.policy.actor.logits, self.policy.actor.pi, self.policy.critic.value], 
+								feed_dict={
+									self.policy.actor.inputs: [state],
+									self.policy.critic.inputs: [state]
+								})
 
 			if self.noise_argmax:
-				action = noise_and_argmax(logit)
+				action = noise_and_argmax(logit.ravel().tolist())
 			else:
+				pi = p.ravel().tolist()
 				action = np.random.choice(range(len(pi)), p = np.array(pi)/ np.sum(pi))  # select action w.r.t the actions prob
 
-			states.append(state)
+			if return_state_ids:
+				states.append(self.env.current_state_id)
+			else:
+				states.append(state)
+				
 			next_state, reward, done = self.env.step(action)
 			
 			# Store results
-			logits.append(logit[0])
+			pis.append(p.ravel().tolist())
 			actions.append(action)
 			rewards.append(reward)
 			values.append(v)
@@ -56,12 +79,29 @@ class RolloutThread(object):
 				break
 
 		if not done:
-			last_value = self.sess.run(
+			if self.embeddings is not None:
+				last_value = self.sess.run(
 							self.policy.critic.value, 
 							feed_dict={
-								self.policy.critic.inputs: [state]
-							})[0]
+								self.policy.critic.inputs: [state],
+								self.policy.critic.task_input: [self.task_input]
+							})[0][0]
+			else:
+				last_value = self.sess.run(
+								self.policy.critic.value, 
+								feed_dict={
+									self.policy.critic.inputs: [state]
+								})[0][0]
 		else:
 			last_value = None
 
-		return states, logits, actions, rewards, values, last_value
+		end = self.env.current_state_id
+		
+		try:
+			redundants = []
+			for target_id in self.env.target_ids:
+				redundants.append(step + self.env.shortest[end, target_id] - self.env.shortest[start, target_id])
+		except AttributeError:
+			redundants = [0]
+
+		return states, pis, actions, rewards, values, last_value, min(redundants)

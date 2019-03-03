@@ -40,6 +40,12 @@ class AI2ThorDumpEnv():
         self.features = self.h5_file['resnet_features'][()]
         self.visible_objects = self.h5_file['visible_objects'][()]
 
+        if "shortest" in self.h5_file.keys():
+            self.shortest = self.h5_file['shortest'][()]
+
+        if "sharing" in self.h5_file.keys():
+            self.sharing = self.h5_file['sharing'][()].tolist()
+
         self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
         
         self.action_space = self.graph.shape[1]
@@ -117,6 +123,12 @@ class AI2ThorDumpEnv():
         else:
             f = self.features[self.current_state_id]
             self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
+
+    def state(self, state_id):
+        if self.train_resnet:
+            return self.observations[state_id]
+        else:
+            return self.features[state_id]
 
     def seed(self, seed=None):
         self.np_random, seed1 = seeding.np_random(seed)

@@ -27,7 +27,8 @@ class AI2ThorDumpEnv():
         self.scene = scene
         self.target = target
         self.history_size = arguments.get('history_size')
-        self.train_resnet = arguments.get('train_resnet')
+        self.action_size = arguments.get('action_size')
+
 
         self.h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], self.scene)), 'r')
 
@@ -40,6 +41,8 @@ class AI2ThorDumpEnv():
         self.features = self.h5_file['resnet_features'][()]
         self.visible_objects = self.h5_file['visible_objects'][()]
 
+        assert self.action_size <= self.graph.shape[1], "The number of actions exceeds the limit of environment."
+
         if "shortest" in self.h5_file.keys():
             self.shortest = self.h5_file['shortest'][()]
 
@@ -47,8 +50,9 @@ class AI2ThorDumpEnv():
             self.sharing = self.h5_file['sharing'][()].tolist()
 
         self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
+        self.target_locs = set([tuple(self.states[idx][:2]) for idx in self.target_ids])
         
-        self.action_space = self.graph.shape[1]
+        self.action_space = self.action_size 
         self.cv_action_onehot = np.identity(self.action_space)
         
         # Randomness settings
@@ -56,14 +60,7 @@ class AI2ThorDumpEnv():
         if seed:
             self.seed(seed)
         
-        if self.train_resnet:
-            self.observations = self.h5_file['observations'][()]
-            self.resolution = self.observations[0].shape
-
-            self.history_states = np.zeros((self.history_size, self.resolution[0], \
-                                            self.resolution[1], self.resolution[2]))
-        else:
-            self.history_states = np.zeros((self.history_size, self.features.shape[1]))
+        self.history_states = np.zeros((self.history_size, self.features.shape[1]))
 
     def step(self, action):
         '''
@@ -81,12 +78,20 @@ class AI2ThorDumpEnv():
         k = self.current_state_id
         if self.graph[k][action] != -1:
             self.current_state_id = int(self.graph[k][action])
-            if self.current_state_id in self.target_ids:
-                self.terminal = True
-                collided = False
+            if self.action_size == self.graph.shape[1]:
+                if self.current_state_id in self.target_ids:
+                    self.terminal = True
+                    collided = False
+                else:
+                    self.terminal = False
+                    collided = False
             else:
-                self.terminal = False
-                collided = False
+                if tuple(self.states[self.current_state_id][:2]) in self.target_locs:
+                    self.terminal = True
+                    collided = False
+                else:
+                    self.terminal = False
+                    collided = False
         else:
             self.terminal = False
             collided = True
@@ -110,25 +115,27 @@ class AI2ThorDumpEnv():
 
     def reset(self):
         # reset parameters
-        self.current_state_id = random.randrange(self.states.shape[0])
+        if self.action_size == self.graph.shape[1]:
+            self.current_state_id = random.randrange(self.states.shape[0])
+        else:
+            while 1:
+                k = random.randrange(self.states.shape[0])
+                if int(self.states[k][-1]) == 0:
+                    break
+
+            self.current_state_id = k
+
         self.update_states()
         self.terminal = False
 
         return self.history_states, self.target
 
-    def update_states(self):
-        if self.train_resnet:
-            o = self.observations[self.current_state_id]
-            self.history_states = np.append(self.history_states[1:, :], np.expand_dims(o, 0), 0)
-        else:
-            f = self.features[self.current_state_id]
-            self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
+    def update_states(self):        
+        f = self.features[self.current_state_id]
+        self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
 
-    def state(self, state_id):
-        if self.train_resnet:
-            return self.observations[state_id]
-        else:
-            return self.features[state_id]
+    def state(self, state_id):    
+        return self.features[state_id]
 
     def seed(self, seed=None):
         self.np_random, seed1 = seeding.np_random(seed)

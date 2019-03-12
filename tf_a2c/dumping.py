@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+import torchvision.transforms as transforms
 
 ALL_POSSIBLE_ACTIONS = [
     'MoveAhead',
@@ -167,13 +168,7 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     f.create_dataset("shortest", data=shortest_state)
     f.close()
 
-def dump_resnet(scene="FloorPlan28"):
-
-    tmp = models.resnet50(pretrained=True)
-    modules = list(tmp.children())[:-1]
-    extractor = nn.Sequential(*modules)
-    extractor.cuda()
-
+def dump_resnet(extractor, normalize, scene="FloorPlan28"):
     f = h5py.File("env/dumped/{}.hdf5".format(scene), "a")
     observations = f['observations']
     resnet_features = []
@@ -182,8 +177,9 @@ def dump_resnet(scene="FloorPlan28"):
     for idx, ob in enumerate(observations):
         print("Dumping resnet: {}/{}".format(idx + 1, observations.shape[0]), end='\r', flush=True)
         resized_frame = np.transpose(ob, (2, 0 ,1))
-
-        inp = torch.from_numpy(resized_frame).unsqueeze(0).type(torch.cuda.FloatTensor)
+        resized_frame = torch.from_numpy(resized_frame).type(torch.cuda.FloatTensor)
+        resized_frame = normalize(resized_frame)
+        inp = resized_frame.unsqueeze(0)
         
         feature = extractor(inp)
         feature = feature.squeeze().detach().cpu().numpy()[:, np.newaxis]
@@ -201,6 +197,20 @@ if __name__ == '__main__':
     #   # dump(scene, config['resolution'])
     #   dump_resnet(scene)
 
-    scene = "FloorPlan2"
-    dump(scene, config['resolution'])
-    dump_resnet(scene)
+    tmp = models.resnet50(pretrained=True)
+    # tmp = models.inception_v3(pretrained=True)
+    modules = list(tmp.children())[:-1]
+    extractor = nn.Sequential(*modules)
+    extractor.cuda()
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+    for scene in [
+                     "FloorPlan333",
+                     "FloorPlan305",
+                     "FloorPlan402",
+                     "FloorPlan403",
+                     "FloorPlan404"]:
+        # scene = "FloorPlan{}".format(i)
+        dump(scene, config['resolution'])
+        dump_resnet(extractor, normalize, scene)

@@ -1,13 +1,39 @@
 {
+   "resolution": [224, 224],
+   "default_reward": -0.01,
+   "success_reward": 10.0,
+   "collide_reward": -0.1,
+   "embeddings_onehot": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_onehot.pkl", 
+   "embeddings_fasttext": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_fasttext300.pkl", 
+   "dump_path": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/dumped/",
+   "adj_file": "/home/yoshi/thesis/relations.npy",
+   "all_objects": ["KeyChain", "Bread", "Potato", "Mug", "PaintingHanger", "Book", "ToiletPaper", "TableTop", 
+                  "Chair", "Bed", "Container", "Painting", "Watch", "Apple", "Sink", "Cabinet", "StoveKnob", 
+                  "Pan", "Cloth", "ShowerDoor", "CoffeeMachine", "Toaster", "Box", "CellPhone", "Tomato", 
+                  "SoapBar", "HousePlant", "Bowl", "Lettuce", "ButterKnife", "Fridge", "Laptop", "Towel", 
+                  "Knife", "Pen", "Plate", "SprayBottle", "Microwave", "LightSwitch", "StoveBurner", "Candle", 
+                  "Pencil", "Blinds", "SoapBottle", "Lamp", "TowelHolder", "Statue", "Mirror", "Newspaper", 
+                  "WateringCan", "Television", "AlarmClock", "CreditCard"],
+   "picked": {
+       "FloorPlan1": {"train": ["CoffeeMachine", "Fridge", "Lettuce",  "TableTop", "Plate", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],
+                    "test": ["Toaster", "Mug", "Microwave", "Apple"]},
+       "FloorPlan2": {"train": ["CoffeeMachine", "Fridge", "TableTop", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],
+                    "test": ["Microwave"]},
+       "FloorPlan28": {"train": ["CoffeeMachine", "Fridge", "TableTop", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],
+                        "test": ["Toaster", "Mug", "Microwave"]},
 
-    "grayscale": false,
-    "resolution": [224, 224],
-    "history_size": 4,
-    "anti-collision": 1,
-    "embeddings": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_fasttext300.pkl", 
-    "dump_path": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/env/dumped/",
-    "train_resnet": 0,
-    "rooms": {
+       "FloorPlan203": {"train": ["PaintingHanger", "Box", "TableTop", "Television", "Chair"],
+                       "test": ["Painting"]},
+       "FloorPlan202": {"train": ["PaintingHanger", "Box", "TableTop", "Television", "Chair", "HousePlant"],
+                       "test": ["Painting"]},
+       "FloorPlan204": {"train": ["KeyChain", "PaintingHanger", "Box", "TableTop", "WateringCan", "Chair", "HousePlant"],
+                       "test": ["Painting"]},
+ 
+       "FloorPlan303": {"train": ["LightSwitch", "TableTop", "Laptop"],
+                       "test": ["Cabinet"]}
+
+   },
+   "rooms": {
         "Kitchens":{
             "scenes": ["FloorPlan1",
                      "FloorPlan2",

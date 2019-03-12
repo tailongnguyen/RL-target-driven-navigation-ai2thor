@@ -1,3 +1,2 @@
-tf_a2c/env/dumped/*
-pytorch_a3c/env/dumped/*
-*/training-history/
+dumped/
+*/training-history/*

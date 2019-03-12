@@ -28,36 +28,13 @@ def worker(training_scene, training_object, config, arguments):
 	agent.train()
 
 def main(config, arguments):
-
-	room = config['rooms'][ALL_ROOMS[arguments['room_id']]]
-	all_scenes = room['scenes']
-	train_objects = room['train_objects']
-	test_objects = room['test_objects']
-
-	# np.random.shuffle(all_scenes)
-	# training_scenes = all_scenes[:20]
-	# validation_scenes = all_scenes[20:25]
-	# testing_scenes = all_scenes[25:]
-
-	training_scene = all_scenes[arguments['scene_id']]
-
-	# h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], training_scene)), 'r')
-	# all_visible_objects = set(",".join([o for o in list(h5_file['visible_objects']) if o != '']).split(','))
-	# print(all_visible_objects)
-	# trainable_objects = list(set(train_objects).intersection(all_visible_objects))
-	# h5_file.close()
-	# print(trainable_objects)
-
-	trainable_objects = {
-		0: ['Knife', 'Sink', 'CoffeeMachine', 'StoveKnob', 'StoveBurner', 'Cabinet', 'Fridge', 'TableTop'],
-		1: ['CoffeeMachine', 'StoveBurner', 'Sink', 'GarbageCan', 'TableTop', 'Fridge',  'Mug', 'StoveKnob', 'Microwave', 'Cabinet', 'Chair'],
-		27: ['Cabinet', 'TableTop', 'StoveKnob', 'Fridge', 'Sink', 'StoveBurner', 'CoffeeMachine']
-	}
+	training_scene = "FloorPlan{}".format(arguments['scene_id'])
+	trainable_objects = config["picked"][training_scene]
 
 	if arguments['mode'] == 0:
 		worker(training_scene, trainable_objects[arguments['scene_id']][arguments['target_id']], config, arguments)
 	elif arguments['mode'] == 1:
-		trainable_objects = trainable_objects[arguments['scene_id']]
+		trainable_objects = trainable_objects['train']
 
 		if arguments['from'] == -1:
 			num_tasks = int(1 / arguments['gpu_fraction'])
@@ -68,7 +45,7 @@ def main(config, arguments):
 			trainable_objects = trainable_objects[arguments['from']:arguments['to']]
 			
 		print(trainable_objects)
-		print("Starting {} processes ..".format(num_tasks))
+		print("Starting {} processes ..".format(len(trainable_objects)))
 
 		processes = []
 		for target in trainable_objects:
@@ -86,7 +63,6 @@ def main(config, arguments):
 			trainable_objects = trainable_objects[:num_tasks]
 		else:
 			assert arguments['from'] != -1 and arguments['to'] != -1, "From and to should be valid."
-			num_tasks = arguments['to'] - arguments['from']
 			trainable_objects = trainable_objects[arguments['from']:arguments['to']]
 
 		print("Training scene: {} | Target: {}".format(training_scene, trainable_objects))
@@ -128,10 +104,12 @@ if __name__ == '__main__':
 						help='Number of steps to be sampled in each episode')
 	parser.add_argument('--gpu_fraction', nargs='?', type=float, default=0.15,
 						help='GPU memory usage fraction')
-	parser.add_argument('--lr', nargs='?', type=float, default=1e-3,
+	parser.add_argument('--lr', nargs='?', type=float, default=1e-4,
 						help='Learning rate')
 	parser.add_argument('--use_gae', nargs='?', type=int, default=1,
 						help='Whether to use generalized advantage estimate')
+	parser.add_argument('--embed', nargs='?', type=int, default=1,
+						help='Whether to use text embedding for multitask')
 	parser.add_argument('--num_epochs', nargs='?', type=int, default=10000,
 						help='Number of epochs to train')
 	parser.add_argument('--gamma', nargs='?', type=float, default=0.99,
@@ -149,7 +127,9 @@ if __name__ == '__main__':
 	parser.add_argument('--train_resnet', type=int, default=0,
 						help='whether to include resnet into training')
 	parser.add_argument('--history_size', type=int, default=1,
-						help='whether to include resnet into training')
+						help='number of frames to be stacked as input')
+	parser.add_argument('--action_size', type=int, default=4,
+						help='number of possible actions')
 	parser.add_argument('--decay', nargs='?', type=int, default=1,
 						help='Whether to decay the learning_rate')
 	parser.add_argument('--noise_argmax', nargs='?', type=int, default=1,

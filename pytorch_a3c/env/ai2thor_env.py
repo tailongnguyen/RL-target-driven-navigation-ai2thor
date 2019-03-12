@@ -7,188 +7,63 @@ import os
 import sys
 import random
 
-from skimage import transform
 from copy import deepcopy
 from gym import error, spaces
 from gym.utils import seeding
-
-ALL_POSSIBLE_ACTIONS = [
-    'MoveAhead',
-    'MoveBack',
-    'RotateRight',
-    'RotateLeft',
-    # 'Stop'   
-]
-
-
-class AI2ThorEnv(gym.Env):
-    """
-    Wrapper base class
-    """
-    def __init__(self, config, scenes, objects, seed=None):
-        """
-        :param seed: (int)   Random seed
-        :param config: (str)   Path to environment configuration file. Either absolute or
-                                     relative path to the root of this repository.
-        :param: scenes: (list)  List of scene ids to train on
-        :param: objects: (list)  List of target objects to train on
-        """
-        
-        self.config = config
-        self.scenes = scenes
-        self.objects = objects
-        self.scene_id = np.random.choice(self.scenes)
-        self.target = np.random.choice(self.objects)
-
-        # Randomness settings
-        self.np_random = None
-        if seed:
-            self.seed(seed)
-        
-        # Action settings
-        self.action_names = tuple(ALL_POSSIBLE_ACTIONS.copy())
-        
-        self.action_space = spaces.Discrete(len(self.action_names))
-        # Image settings
-        self.event = None
-        channels = 1 if self.config['grayscale'] else 3
-        self.observation_space = spaces.Box(low=0, 
-                                            high=255, 
-                                            shape=(channels, self.config['resolution'][0],
-                                            self.config['resolution'][1]),
-                                            dtype=np.uint8)
-
-        self.history_frames = [np.zeros(self.observation_space.shape) for i in range(self.config['history_size'])]
-
-        # Start ai2thor
-        self.controller = ai2thor.controller.Controller()
-        self.controller.start()
-
-    def step(self, action, verbose=True):
-        if not self.action_space.contains(action):
-            raise error.InvalidAction('Action must be an integer between '
-                                      '0 and {}!'.format(self.action_space.n))
-        action_str = self.action_names[action]
-
-        # Move or Rotate actions
-        self.event = self.controller.step(dict(action=action_str))
-
-        state_image = self.preprocess(self.event.frame)
-        self.history_frames += [state_image]
-        self.history_frames = self.history_frames[1:]
-
-        reward, done = self.transition_reward()
-
-        return self.history_frames, reward, done, self.target
-
-    def transition_reward(self):
-        visible_objects = [obj['objectType'] for obj in self.event.metadata['objects'] if obj['visible']]
-        reward = -0.01
-        done = 0
-        if self.target in visible_objects:
-            reward = 10.0
-            done = 1
-
-        return reward, done
-
-    def preprocess(self, img):
-        """
-        Compute image operations to generate state representation
-        """
-        img = cv2.resize(img, tuple(self.config['resolution']))
-        img = img.astype(np.float32)
-        if self.observation_space.shape[0] == 1:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img = np.transpose(img, axes=(2,0,1))
-        print("shape:", img.shape)
-        return img
-
-    def reset(self):
-        print('Resetting environment and starting new episode')
-        self.scene_id = np.random.choice(self.scenes)
-        self.target = np.random.choice(self.objects)
-        print("Looking for {} in {}".format(self.target, self.scene_id))
-        
-        self.controller.reset(self.scene_id)
-        self.event = self.controller.step(dict(action='Initialize', gridSize=0.25,
-                                               renderDepthImage=True, renderClassImage=True,
-                                               renderObjectImage=True))
-        state = self.preprocess(self.event.frame)
-        self.history_frames[-1] = state
-        return self.history_frames, self.target
-
-    def render(self, mode='human'):
-        raise NotImplementedError
-
-    def seed(self, seed=None):
-        self.np_random, seed1 = seeding.np_random(seed)
-        # Derive a random seed. This gets passed as a uint, but gets
-        # checked as an int elsewhere, so we need to keep it below
-        # 2**31.
-        return seed1
-
-    def close(self):
-        self.controller.stop()
 
 class AI2ThorDumpEnv():
     """
     Wrapper base class
     """
-    def __init__(self, scenes, objects, config, custom_config=dict(), seed=None):
+    def __init__(self, scene, target, config, arguments=dict(), seed=None):
         """
         :param seed: (int)   Random seed
         :param config: (str)   Dictionary file storing cofigurations
-        :param: scenes: (list)  List of scene ids to train on
-        :param: objects: (list)  List of target objects to train on
+        :param: scene: (list)  Scene to train on
+        :param: objects: (list)  Target object to train on
         """
         
         self.config = config
-        self.scenes = scenes
-        self.objects = objects
-        self.history_size = custom_config.get('history_size') or config['history_size']
-        self.train_resnet = custom_config.get('train_resnet') or config['train_resnet']
+        self.arguments = arguments
+        self.scene = scene
+        self.target = target
+        self.history_size = arguments.get('history_size')
+        self.action_size = arguments.get('action_size')
 
-        tried = 0
-        while 1:
-            self.scene_id = np.random.choice(self.scenes)
-            self.h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], self.scene_id)), 'r')
 
-            all_visible_objects = set(",".join([o for o in list(self.h5_file['visible_objects']) if o != '']).split(','))
-            self.objects = list(set(self.objects).intersection(all_visible_objects))
-            if len(self.objects) > 0:
-                break
-            else:
-                tried += 1
-                self.h5_file.close()
+        self.h5_file = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], self.scene)), 'r')
 
-                if tried >= 20:
-                    sys.exit("Something went wrong in choosing target!")
+        all_visible_objects = set(",".join([o for o in list(self.h5_file['visible_objects']) if o != '']).split(','))
+        
+        assert self.target in all_visible_objects, "Target {} is unreachable in {}!".format(self.target, self.scene)
 
         self.states = self.h5_file['locations'][()]
         self.graph = self.h5_file['graph'][()]
         self.features = self.h5_file['resnet_features'][()]
         self.visible_objects = self.h5_file['visible_objects'][()]
 
-        self.target = np.random.choice(self.objects)
-        self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
+        assert self.action_size <= self.graph.shape[1], "The number of actions exceeds the limit of environment."
 
-        self.action_space = self.graph.shape[1]
+        if "shortest" in self.h5_file.keys():
+            self.shortest = self.h5_file['shortest'][()]
+
+        if "sharing" in self.h5_file.keys():
+            self.sharing = self.h5_file['sharing'][()].tolist()
+
+        self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
+        self.target_locs = set([tuple(self.states[idx][:2]) for idx in self.target_ids])
+        
+        self.action_space = self.action_size 
+        self.cv_action_onehot = np.identity(self.action_space)
         
         # Randomness settings
         self.np_random = None
         if seed:
             self.seed(seed)
         
-        if self.train_resnet:
-            self.observations = self.h5_file['observations'][()]
-            self.resolution = self.observations[0].shape
+        self.history_states = np.zeros((self.history_size, self.features.shape[1]))
 
-            self.history_states = np.zeros((self.history_size, self.resolution[0], \
-                                            self.resolution[1], self.resolution[2]))
-        else:
-            self.history_states = np.zeros((self.history_size, self.features.shape[1]))
-
-    def step(self, action, verbose=True):
+    def step(self, action):
         '''
         0: move ahead
         1: move back
@@ -204,51 +79,64 @@ class AI2ThorDumpEnv():
         k = self.current_state_id
         if self.graph[k][action] != -1:
             self.current_state_id = int(self.graph[k][action])
-            if self.current_state_id in self.target_ids:
-                self.terminal = True
-                collided = False
+            if self.action_size == self.graph.shape[1]:
+                if self.current_state_id in self.target_ids:
+                    self.terminal = True
+                    collided = False
+                else:
+                    self.terminal = False
+                    collided = False
             else:
-                self.terminal = False
-                collided = False
+                if tuple(self.states[self.current_state_id][:2]) in self.target_locs:
+                    self.terminal = True
+                    collided = False
+                else:
+                    self.terminal = False
+                    collided = False
         else:
             self.terminal = False
             collided = True
 
         reward, done = self.transition_reward(collided)
 
-        self.tiled_states()
+        self.update_states()
 
         return self.history_states, reward, done
 
     def transition_reward(self, collided):
-        reward = -0.01
+        reward = self.config['default_reward']
         done = 0
         if self.terminal:
-            reward = 10.0
+            reward = self.config['success_reward']
             done = 1
-        elif self.config['anti-collision'] and collided:
-            reward = -0.1
+        elif self.arguments['anti_col'] and collided:
+            reward = self.config['collide_reward']
 
         return reward, done
 
     def reset(self):
         # reset parameters
-        self.current_state_id = random.randrange(self.states.shape[0])
-        self.tiled_states()
+        if self.action_size == self.graph.shape[1]:
+            self.current_state_id = random.randrange(self.states.shape[0])
+        else:
+            while 1:
+                k = random.randrange(self.states.shape[0])
+                if int(self.states[k][-1]) == 0:
+                    break
+
+            self.current_state_id = k
+
+        self.update_states()
         self.terminal = False
 
         return self.history_states, self.target
 
-    def tiled_states(self):
-        if self.train_resnet:
-            o = self.observations[self.current_state_id]
-            self.history_states = np.append(self.history_states[1:, :], np.expand_dims(o, 0), 0)
-        else:
-            f = self.features[self.current_state_id]
-            self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
+    def update_states(self):        
+        f = self.features[self.current_state_id]
+        self.history_states = np.append(self.history_states[1:, :], np.transpose(f, (1,0)), 0)
 
-    def render(self, mode='human'):
-        raise NotImplementedError
+    def state(self, state_id):    
+        return self.features[state_id]
 
     def seed(self, seed=None):
         self.np_random, seed1 = seeding.np_random(seed)

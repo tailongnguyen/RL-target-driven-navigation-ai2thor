@@ -10,7 +10,7 @@ class RolloutThread(object):
 		scene, 
 		target,
 		policy,
-		embeddings, 
+		embedding, 
 		config,
 		arguments):
 		
@@ -21,12 +21,10 @@ class RolloutThread(object):
 		self.policy = policy
 		self.env = AI2ThorDumpEnv(scene, target, config, arguments)
 
-		if embeddings is not None:
-			assert target in embeddings, "Target has no embedding."
-			self.task_input = embeddings[target].tolist()
-
-		self.embeddings = embeddings
-
+		self.embedding = embedding
+		if embedding is not None:
+			self.task_input = embedding
+		
 	def rollout(self, return_state_ids=False):
 		states, pis, actions, rewards, values, last_value = [], [], [], [], [], []
 		
@@ -35,7 +33,7 @@ class RolloutThread(object):
 		step = 0
 
 		while True:
-			if self.embeddings is not None:
+			if self.embedding is not None:
 				logit, p, v = self.sess.run(
 							[self.policy.actor.logits, self.policy.actor.pi, self.policy.critic.value], 
 							feed_dict={
@@ -79,7 +77,7 @@ class RolloutThread(object):
 				break
 
 		if not done:
-			if self.embeddings is not None:
+			if self.embedding is not None:
 				last_value = self.sess.run(
 							self.policy.critic.value, 
 							feed_dict={

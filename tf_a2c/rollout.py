@@ -9,11 +9,11 @@ class Rollout(object):
 		training_object,
 		config,
 		arguments,
-		embeddings=None):
+		embedding=None):
 		
 		self.config = config
 		self.arguments = arguments
-		self.embeddings = embeddings
+		self.embedding = embedding
 		
 		self.num_episodes = arguments.get('num_episodes')
 
@@ -25,7 +25,7 @@ class Rollout(object):
 
 	def _rollout_process(self, index, sess, policy, return_state_ids):
 		thread_rollout = RolloutThread(sess=sess, scene=self.training_scene, target=self.training_object,
-										policy=policy, embeddings=self.embeddings, 
+										policy=policy, embedding=self.embedding, 
 										config=self.config, arguments=self.arguments)
 
 		ep_states, ep_logits, ep_actions, ep_rewards, ep_values, ep_last_value, ep_redundant = thread_rollout.rollout(return_state_ids)

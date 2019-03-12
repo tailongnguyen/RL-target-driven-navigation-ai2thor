@@ -5,38 +5,41 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 from torch.autograd import Variable
+from layers import GraphConvolution
+from utils import *
 
-def normalized_columns_initializer(weights, std=1.0):
-    """
-    Weights are normalized over their column. Also, allows control over std which is useful for
-    initialising action logit output so that all actions have similar likelihood
-    """
+class GCN(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dropout):
+        super(GCN, self).__init__()
 
-    out = torch.randn(weights.size())
-    out *= std / torch.sqrt(out.pow(2).sum(1, keepdim=True))
-    return out
+        self.gc1 = GraphConvolution(nfeat, nhid)
+        self.gc2 = GraphConvolution(nhid, nhid)
+        self.gc3 = GraphConvolution(nhid, nclass)
+        self.dropout = dropout
 
-
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        weight_shape = list(m.weight.data.size())
-        fan_in = weight_shape[1]
-        fan_out = weight_shape[0]
-        w_bound = np.sqrt(6. / (fan_in + fan_out))
-        m.weight.data.uniform_(-w_bound, w_bound)
-        m.bias.data.fill_(0)
+    def forward(self, x, adj):
+        print(x.size())
+        x = F.relu(self.gc1(x, adj))
+        x = F.dropout(x, self.dropout, training=self.training)
+        print(x.size())
+        x = F.relu(self.gc2(x, adj))
+        x = F.dropout(x, self.dropout, training=self.training)
+        print(x.size())
+        x = F.relu(self.gc3(x, adj))
+        print(x.size())
+        return x
 
 
 class ActorCritic(torch.nn.Module):    
 
-    def __init__(self, num_actions, config, custom_config=dict(), train_resnet=False, use_gpu=False):
+    def __init__(self, config, arguments):
         super(ActorCritic, self).__init__()
 
         self.config = config
-        self.dtype = torch.FloatTensor if not use_gpu else torch.cuda.FloatTensor
-        self.train_resnet = train_resnet
-        self.history_size = custom_config.get('history_size') or config['history_size']
+        self.arguments = arguments
+        self.dtype = torch.FloatTensor if not arguments['use_gpu'] else torch.cuda.FloatTensor
+        self.train_resnet = arguments['train_resnet']
+        self.history_size = arguments['history_size']
 
         if self.train_resnet:
             self.extractor = models.resnet50(pretrained=True)
@@ -45,23 +48,31 @@ class ActorCritic(torch.nn.Module):
 
         self.visual_ft = nn.Linear(in_features=2048 * self.history_size, out_features=512)
 
-        if config["embeddings"] is None: 
-            self.semantic_size = 100
-            self.embeddings = lambda x: np.random.sample((100, )).astype(np.float32)
+        if arguments["embed"] == 0: 
+            self.embeddings = pickle.load(open(config["embeddings_onehot"], 'rb'))
         else:
-            self.embeddings = pickle.load(open(config["embeddings"], 'rb'))
-            self.semantic_size = list(self.embeddings.values())[0].shape[0]
-            
+            self.embeddings = pickle.load(open(config["embeddings_fasttext"], 'rb'))
+
+        self.semantic_size = list(self.embeddings.values())[0].shape[0]
         self.semantic_ft = nn.Linear(in_features=self.semantic_size, out_features=512)
 
-        if self.config.get('graph') is None:
+        self.num_objects = len(list(self.embeddings.values()))
+        self.all_embeddings = list(self.embeddings.values())
+
+        if arguments['use_gcn']:
             fused_size = 512 * 3
+            self.adj = normalize(np.load(self.config['adj_file']))
+            self.adj = torch.from_numpy(self.adj).type(self.dtype)
+
+            self.score_to_512 = nn.Linear(in_features=1000, out_features=512)
+            self.gcn = GCN(nfeat=1024, nhid=1024, nclass=1, dropout=0.5)
+            self.gcn_to_512 = nn.Linear(in_features=self.num_objects, out_features=512)
         else:
             fused_size = 512 * 2
 
         self.hidden_mlp = nn.Linear(in_features=fused_size, out_features=512)
         self.critic_linear = nn.Linear(512, 1)
-        self.actor_linear = nn.Linear(512, num_actions)
+        self.actor_linear = nn.Linear(512, arguments['action_size'])
 
         self.apply(weights_init)
         self.actor_linear.weight.data = normalized_columns_initializer(
@@ -71,24 +82,38 @@ class ActorCritic(torch.nn.Module):
                                             self.critic_linear.weight.data, 1.0)
         self.critic_linear.bias.data.fill_(0)
 
-    def forward(self, inputs, word):
+    def forward(self, inputs, scores, word):
         assert len(inputs) == self.history_size
+        inputs = [torch.from_numpy(inp).type(self.dtype) for inp in inputs]    
 
-        inputs = [torch.from_numpy(np.transpose(inp, (2, 0, 1))).type(self.dtype) for inp in inputs]
-        if self.train_resnet:
-            features = [self.extractor(inp.unsqueeze(0)) for inp in inputs]
-        else:
-            features = inputs
-            
-        joint_features = torch.cat(features)
+        joint_features = torch.cat(inputs)
         joint_features = joint_features.view(1, -1)
         visual = F.relu(self.visual_ft(joint_features))
         
         embeded = torch.from_numpy(self.embeddings[word]).type(self.dtype)
         embeded = embeded.view(1, embeded.size(0))
         semantic = F.relu(self.semantic_ft(embeded))
-        joint_embeddings = torch.cat((visual, semantic), 1)
         
+        if self.arguments['use_gcn']:
+            scores = torch.from_numpy(scores).type(self.dtype)
+            scores_512 = F.relu(self.score_to_512(scores))
+            nodes = []
+            for i in range(self.num_objects):
+                em = torch.from_numpy(self.all_embeddings[i]).type(self.dtype)
+                em = em.view(1, em.size(0))
+                em_512 = F.relu(self.semantic_ft(em))
+                em_512 = em_512.view(512)
+                nodes.append(torch.cat((scores_512, em_512)))
+
+            nodes = torch.stack(nodes)
+            gcn_out = self.gcn(nodes, self.adj)
+            gcn_out = gcn_out.view(1, gcn_out.numel())
+            gcn_512 = F.relu(self.gcn_to_512(gcn_out))
+
+            joint_embeddings = torch.cat((visual, semantic, gcn_512), 1)
+        else:
+            joint_embeddings = torch.cat((visual, semantic), 1)
+
         x = self.hidden_mlp(joint_embeddings)
         x = F.relu(x)
         

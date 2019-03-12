@@ -44,14 +44,18 @@ class MultiTaskPolicy(object):
 		self.reuse = arguments.get('share_latent')
 		self.gpu_fraction = arguments.get('gpu_fraction')
 
-		if arguments['mode'] == 2:
+		self.rollouts = []
+		if arguments['embed']:
 			self.embeddings = pickle.load(open(config['embeddings'], 'rb')) 
+			for obj in training_objects:
+				self.rollouts.append(Rollout(training_scene, obj, config, arguments, self.embeddings[obj].tolist()))
+		else:
+			self.embeddings = np.identity(len(self.training_objects))
+			for i, obj in enumerate(self.training_objects):
+				self.rollouts.append(Rollout(training_scene, obj, config, arguments, self.embeddings[i].tolist()))
 
 		self.env = AI2ThorDumpEnv(training_scene, training_objects[0], config, arguments)
 
-		self.rollouts = []
-		for obj in training_objects:
-			self.rollouts.append(Rollout(training_scene, obj, config, arguments, self.embeddings))
 
 		tf.reset_default_graph()
 
@@ -59,7 +63,7 @@ class MultiTaskPolicy(object):
 							state_size=self.env.features.shape[1], 
 							action_size=self.env.action_space,
 							history_size=arguments['history_size'],
-							embedding_size=-1 if arguments['mode'] != 2 else 300,
+							embedding_size=300 if arguments['embed'] else len(self.training_objects),
 							entropy_coeff=self.ec,
 							value_function_coeff=self.vc,
 							max_gradient_norm=self.max_grad_norm,
@@ -89,10 +93,19 @@ class MultiTaskPolicy(object):
 		
 		self.timer = timer
 
+		self.reward_logs = []
+		self.success_logs = []
+		self.redundant_logs = []
+
 		test_name =  training_scene
-		tf.summary.scalar(test_name + "/" + "_".join(training_objects) + "/rewards", self.PGNetwork.mean_reward)
-		tf.summary.scalar(test_name + "/" + "_".join(training_objects) + "/success_rate", self.PGNetwork.success_rate)
-		tf.summary.scalar(test_name + "/" + "_".join(training_objects) + "/redundants", self.PGNetwork.mean_redundant)
+		for training_object in training_objects:
+			self.reward_logs.append(tf.placeholder(tf.float32, name="rewards_{}".format(training_object)))
+			self.success_logs.append(tf.placeholder(tf.float32, name="success_{}".format(training_object)))
+			self.redundant_logs.append(tf.placeholder(tf.float32, name="redundant_{}".format(training_object)))
+
+			tf.summary.scalar(test_name + "/" + training_object + "/rewards", self.reward_logs[-1])
+			tf.summary.scalar(test_name + "/" + training_object + "/success_rate", self.success_logs[-1])
+			tf.summary.scalar(test_name + "/" + training_object + "/redundants", self.redundant_logs[-1])
 
 		self.write_op = tf.summary.merge_all()
 
@@ -202,19 +215,19 @@ class MultiTaskPolicy(object):
 	def train(self):
 		total_samples = 0
 		errors = 0
+		batch_size = 128
 
 		start = time.time()
 		for epoch in range(self.num_epochs):
-			# sys.stdout.flush()
+			sum_dict = {}
 			mb_states = []
 			mb_actions = []
 			mb_returns = []
 			mb_advantages = []
 			mb_logits = []
-			rewards = []
-			redundants = []
 			mb_task_inputs = []
-			success_count = 0
+
+			success_rates = []
 
 			for task_index in range(len(self.training_objects)):
 				# ROLLOUT SAMPLE
@@ -233,53 +246,40 @@ class MultiTaskPolicy(object):
 				mb_advantages += task_advantages
 				mb_returns += task_returns
 				mb_logits += task_logits
-				rewards += task_rewards
-				redundants += task_redundants
-				success_count += task_success_count
 
-				if self.arguments['mode'] == 2:
+				if self.arguments['embed']:
 					mb_task_inputs += [self.embeddings[self.training_objects[task_index]].tolist()] * len(task_states)
+				else:
+					mb_task_inputs += [self.embeddings[task_index].tolist()] * len(task_states)
 
+				success_rates.append(round(task_success_count / (self.num_episodes * len(self.training_objects)), 3))
 
-			if len(np.asarray(mb_returns).shape) == 2:
-				print("Error happened!")
-				if not os.path.isdir(os.path.join("errors", self.timer)):
-					os.mkdir(os.path.join("errors", self.timer))
-
-				f = h5py.File(os.path.join("errors", self.timer, "{}.hdf5".format(errors)), 'w')
-				f.create_dataset("states", data=np.asarray(mb_states, np.float32))
-				f.create_dataset("actions", data=np.asarray(mb_actions, np.float32))
-				f.create_dataset("returns", data=np.asarray(mb_returns, np.float32))
-				f.create_dataset("advantages", data=np.asarray(mb_advantages, np.float32))
-				f.create_dataset("logits", data=np.asarray(mb_logits, np.float32))
-				f.create_dataset("rewards", data=np.asarray(rewards, np.float32))
-				f.close()
-
-				errors += 1
-				print("=======\n")
-
-				mb_returns = [r[0] for r in mb_returns]
-			#---------------------------------------------------------------------------------------------------------------------#	
-			print('[{}-{}] Time elapsed: {:.3f}, epoch {}/{}, success_rate: {:.3f}'.format(\
-				self.training_scene, self.training_objects, (time.time() - start)/3600, epoch + 1, \
-				self.num_epochs, success_count / (self.num_episodes * len(self.training_objects))))
-
-			sum_dict = {}
-			assert len(mb_states) == len(mb_actions) == len(mb_returns) == len(mb_advantages)
+				assert len(task_states) == len(task_actions) == len(task_returns) == len(task_advantages)
 			
-			policy_loss, value_loss, _, _ = self.PGNetwork.learn(self.sess, actor_states=mb_states,
-																advantages=mb_advantages, actions=mb_actions,
-																critic_states=mb_states, returns=mb_returns,
-																task_inputs=mb_task_inputs)
+				sum_dict[self.reward_logs[task_index]] = np.sum(np.concatenate(task_rewards)) / self.num_episodes
+				sum_dict[self.success_logs[task_index]] = round(task_success_count / self.num_episodes, 3)
+				sum_dict[self.redundant_logs[task_index]] = np.mean(task_redundants)
+			
+				total_samples += len(list(np.concatenate(task_rewards)))
+
+			all_batch = list(zip(mb_states, mb_advantages, mb_actions, mb_returns, mb_task_inputs))
+			np.random.shuffle(all_batch)
+			mb_states, mb_advantages, mb_actions, mb_returns, mb_task_inputs = zip(*all_batch)
+			
+			num_batch = len(mb_states) // batch_size + 1
+			for it in range(num_batch):
+				right = (it + 1) * batch_size if (it + 1) * batch_size <= len(mb_states) else len(mb_states)
+				left = right - batch_size
+
+				policy_loss, value_loss, _, _ = self.PGNetwork.learn(self.sess, actor_states=mb_states[left:right],
+																	advantages=mb_advantages[left:right], actions=mb_actions[left:right],
+																	critic_states=mb_states[left:right], returns=mb_returns[left:right],
+																	task_inputs=mb_task_inputs[left:right])
 				
-			sum_dict[self.PGNetwork.mean_reward] = np.sum(np.concatenate(rewards)) / len(rewards)
-			sum_dict[self.PGNetwork.success_rate] = success_count / self.num_episodes
-			sum_dict[self.PGNetwork.mean_redundant] = np.mean(redundants)
-			
-			total_samples += len(list(np.concatenate(rewards)))
-
 			#---------------------------------------------------------------------------------------------------------------------#	
-			
+			print('[{}-{}] Time elapsed: {:.3f}, epoch {}/{}, success_rate: {}'.format(\
+				self.training_scene, "-".join(self.training_objects), (time.time() - start)/3600, epoch + 1, \
+				self.num_epochs, str(success_rates)))
 
 			# WRITE TF SUMMARIES
 			#---------------------------------------------------------------------------------------------------------------------#	

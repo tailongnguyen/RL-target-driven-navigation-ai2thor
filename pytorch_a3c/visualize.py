@@ -11,18 +11,20 @@ parser.add_argument('--mode', type=int, default=0,
                     	1: separated tasks')
 parser.add_argument('--folder', type=str, default='training-history/multitask_onehot/')
 
-smooth = 5
+smooth = 10
 def foo_all(folder):
-    files = [f for f in os.listdir(folder) if '.pth' not in f]
+    files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
 
     tasks = [] 
-    for f in files:         
-        tasks.append(pickle.load(open(folder+'/' + f, 'rb')))
+    for f in files:    
+        sc = pickle.load(open(folder+'/' + f, 'rb'))
+        print(f, len(sc))     
+        tasks.append(sc[:14000])
       
     avg = np.mean(tasks, 0)
     smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
-    plt.plot(range(len(smoothed_y)), smoothed_y)
-    plt.plot(range(len(avg)), avg, alpha=0.3)
+    plt.plot(range(len(smoothed_y)), smoothed_y, c='C1')
+    plt.plot(range(len(avg)), avg, alpha=0.3, c='C1')
     plt.show()
 
 def foo(folder):

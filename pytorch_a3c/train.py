@@ -46,7 +46,8 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
         model.cuda()
 
     if optimizer is None:
-        optimizer = optim.Adam(shared_model.parameters(), lr=arguments['lr'])
+        optimizer = optim.RMSprop(shared_model.parameters(), lr=arguments['lr'])
+        # optimizer = optim.Adam(shared_model.parameters(), lr=arguments['lr'])
 
     model.train()
 
@@ -99,13 +100,12 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
             if done:
                 state, target = env.reset()
+                print('[P-{}] Episode length: {}. Total length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
+                        .format(rank, episode_length, total_length, sum(rewards), (time.time() - start) / 3600))
 
                 episode_length = 0
                 break
 
-        total_reward_for_episode = sum(rewards)
-        print('[P-{}] Episode length: {}. Total length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
-                .format(rank, episode_length, total_length, total_reward_for_episode, (time.time() - start) / 3600))
 
         # No interaction with environment below.
         # Monitoring
@@ -151,9 +151,10 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
         ensure_shared_grads(model, shared_model)
         optimizer.step()
 
-    with open('training-history/{}/{}_{}_{}.pkl'.format(arguments['about'], training_scene, train_object, rank), 'wb') as f:
-        pickle.dump(total_reward_for_num_steps_list, f, pickle.HIGHEST_PROTOCOL)
+        if (epoch + 1) % 1000 == 0:
+            with open('training-history/{}/{}_{}_{}.pkl'.format(arguments['about'], training_scene, train_object, rank), 'wb') as f:
+                pickle.dump(total_reward_for_num_steps_list, f, pickle.HIGHEST_PROTOCOL)
 
-    torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
+            torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
 
     

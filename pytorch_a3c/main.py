@@ -70,7 +70,7 @@ parser.add_argument('--use_gcn', type=int, default=0,
                     help='whether to include gcn')
 parser.add_argument('--anti_col', type=int, default=0,
                     help='whether to include collision penalty to rewarding scheme')
-parser.add_argument('--no-shared', default=False,
+parser.add_argument('--no-shared', type=int, default=0,
                     help='use an optimizer without shared momentum.')
 parser.add_argument('--scene_id', type=int, default=0,
                         help='scene id (default: 0)')
@@ -129,12 +129,12 @@ if __name__ == '__main__':
 
     # env.close()  # above env initialisation was only to find certain params needed
 
+    scheduler = None
     if args.no_shared:
         optimizer = None
     else:
         optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
         optimizer.share_memory()
-        scheduler = None
         if args.lr_decay:
             decay_step = (args.lr - 1e-6) / (args.num_epochs * args.num_processes)
             lambda1 = lambda epoch: args.lr - epoch * decay_step
@@ -161,6 +161,8 @@ if __name__ == '__main__':
         for p in processes:
             p.join()
 
+        with open('training-history/{}/arguments.json'.format(args.about), 'w') as outfile:
+            json.dump(vars(args), outfile)
     else:
         print("Start testing ..")
         shared_model.load_state_dict(torch.load(args.weights))

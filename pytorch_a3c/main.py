@@ -17,7 +17,7 @@ import torch.multiprocessing as mp
 import json
 
 from env.ai2thor_env import AI2ThorDumpEnv
-from optimizers import SharedAdam
+from optimizers import SharedAdam, SharedRMSprop
 from model import ActorCritic
 from test import test
 from train import train
@@ -38,7 +38,7 @@ parser.add_argument('--ec', type=float, default=0.01,
                     help='entropy term coefficient (default: 0.01)')
 parser.add_argument('--vc', type=float, default=0.5,
                     help='value loss coefficient (default: 0.5)')
-parser.add_argument('--max-grad-norm', type=float, default=50,
+parser.add_argument('--max_grad_norm', type=float, default=50,
                     help='value loss coefficient (default: 50)')
 parser.add_argument('--lr_decay', type=int, default=0,
                     help='whether to use learning rate decay')
@@ -50,19 +50,19 @@ parser.add_argument('--test', type=int, default=0,
                     help='whether to activate testing phase')
 parser.add_argument('--action_size', type=int, default=4,
                     help='number of possible actions')
-parser.add_argument('--num-processes', type=int, default=4,
+parser.add_argument('--num_processes', type=int, default=4,
                     help='how many training processes to use (default: 1)')
-parser.add_argument('--num-iters', type=int, default=100,
+parser.add_argument('--num_iters', type=int, default=100,
                     help='number of forward steps in A3C (default: 20)')
-parser.add_argument('--num-epochs', type=int, default=10000,
+parser.add_argument('--num_epochs', type=int, default=10000,
                     help='number of epochs to train in each thread')
-parser.add_argument('--max-episode-length', type=int, default=1000000,
+parser.add_argument('--max_episode_length', type=int, default=1000000,
                     help='maximum length of an episode (default: 1000000)')
-parser.add_argument('--train-resnet', type=int, default=0,
+parser.add_argument('--train_resnet', type=int, default=0,
                     help='whether to include resnet into training')
-parser.add_argument('--use-gpu', type=int, default=0,
+parser.add_argument('--use_gpu', type=int, default=0,
                     help='whether to use gpu to train')
-parser.add_argument('--history-size', type=int, default=4,
+parser.add_argument('--history_size', type=int, default=4,
                     help='whether to stack frames')
 parser.add_argument('--embed', type=int, default=0,
                     help='embedding mode: 0 for onehot, 1 for fasttext')
@@ -70,14 +70,13 @@ parser.add_argument('--use_gcn', type=int, default=0,
                     help='whether to include gcn')
 parser.add_argument('--anti_col', type=int, default=0,
                     help='whether to include collision penalty to rewarding scheme')
-parser.add_argument('--no-shared', type=int, default=0,
+parser.add_argument('--no_shared', type=int, default=0,
                     help='use an optimizer without shared momentum.')
 parser.add_argument('--scene_id', type=int, default=0,
                         help='scene id (default: 0)')
 
 parser.add_argument('--config_file', type=str, default="config.json")
-parser.add_argument('--weights', type=str)
-parser.set_defaults(synchronous=False)
+parser.add_argument('--weights', type=str, default=None)
 
 ALL_ROOMS = {
     0: "Kitchens",
@@ -106,7 +105,12 @@ if __name__ == '__main__':
 
     print(list(zip(range(len(trainable_objects)), trainable_objects)))
 
-    target_ids = [int(i.strip()) for i in input("Please specify target id: ").split(",")]
+    command = input("Please specify target id: ")
+    if '-' not in command:
+        target_ids = [int(i.strip()) for i in command.split(",")]
+    else:
+        target_ids = list(range(int(command.split('-')[0]), int(command.split('-')[1]) + 1))
+
     training_objects = [trainable_objects[target_id] for target_id in target_ids]
     num_thread_each = args.num_processes // len(training_objects)
     object_threads = []
@@ -133,7 +137,8 @@ if __name__ == '__main__':
     if args.no_shared:
         optimizer = None
     else:
-        optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
+        # optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
+        optimizer = SharedRMSprop(shared_model.parameters(), lr=args.lr)
         optimizer.share_memory()
         if args.lr_decay:
             decay_step = (args.lr - 1e-6) / (args.num_epochs * args.num_processes)
@@ -165,8 +170,12 @@ if __name__ == '__main__':
             json.dump(vars(args), outfile)
     else:
         print("Start testing ..")
-        shared_model.load_state_dict(torch.load(args.weights))
-        print("loaded model")
+        if args.weights is not None:
+            shared_model.load_state_dict(torch.load(args.weights))
+            print("loaded model")
+        else:
+            shared_model = None
+
         results = mp.Array('f', len(training_objects))
         for rank, obj in enumerate(training_objects):
             p = mp.Process(target=test, args=(training_scene, obj, rank, shared_model, \

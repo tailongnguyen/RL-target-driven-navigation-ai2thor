@@ -12,6 +12,7 @@ from collections import deque
 import pickle
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 from env.ai2thor_env import AI2ThorDumpEnv
 from model import ActorCritic
@@ -23,11 +24,11 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
     env.seed(arguments['seed'] + rank)
 
     model = shared_model
+    if model is not None:
+        if arguments['use_gpu']:
+            model.cuda()
 
-    if arguments['use_gpu']:
-        model.cuda()
-
-    model.eval()
+        model.eval()
 
     state, target = env.reset()
     done = True
@@ -40,17 +41,20 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
 
     for ep in range(arguments['num_epochs']):
         for step in range(arguments['num_iters']):
-            with torch.no_grad():
-                value, logit = model(state, None, target)
-            prob = F.softmax(logit, dim=-1)
-            # action = prob.max(1, keepdim=True)[1].numpy()
-            action = prob.multinomial(num_samples=1).detach().numpy()
+            if model is not None:
+                with torch.no_grad():
+                    value, logit = model(state, None, target)
+                prob = F.softmax(logit, dim=-1)
+                # action = prob.max(1, keepdim=True)[1].numpy()
+                action = prob.multinomial(num_samples=1).detach().numpy()[0, 0]
 
-            state, reward, done = env.step(action[0, 0])
+            else:
+                action = np.random.choice(range(arguments['action_size']))
 
+            state, reward, done = env.step(action)
             # a quick hack to prevent the agent from stucking
             # i.e. in test mode an agent can repeat an action ad infinitum
-            actions.append(action[0, 0])
+            actions.append(action)
             if actions.count(actions[0]) == actions.maxlen:
                 # print('In test. Episode over because agent repeated action {} times'.format(
                                                                                     # actions.maxlen))

@@ -52,7 +52,7 @@ def cal_min_dist(index, all_locs, loc2idx):
 
 def dump(scene="FloorPlan21", resolution=(300, 300)):
 
-    f = h5py.File("env/dumped/{}.hdf5".format(scene), "w")
+    f = h5py.File("dumped/{}.hdf5".format(scene), "w")
 
     observations = []
 
@@ -168,10 +168,11 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     f.create_dataset("shortest", data=shortest_state)
     f.close()
 
-def dump_resnet(extractor, normalize, scene="FloorPlan28"):
-    f = h5py.File("env/dumped/{}.hdf5".format(scene), "a")
+def dump_resnet(tmp, extractor, normalize, scene="FloorPlan28"):
+    f = h5py.File("dumped/{}.hdf5".format(scene), "a")
     observations = f['observations']
     resnet_features = []
+    resnet_scores = []
 
     print("{} states in scene {}".format(observations.shape[0], scene))
     for idx, ob in enumerate(observations):
@@ -185,11 +186,17 @@ def dump_resnet(extractor, normalize, scene="FloorPlan28"):
         feature = feature.squeeze().detach().cpu().numpy()[:, np.newaxis]
         resnet_features.append(feature)
 
+        score = tmp(inp)
+        score = score.squeeze().detach().cpu()
+        score = F.softmax(score).numpy()
+        resnet_scores.append(score)
+
     f.create_dataset("resnet_features", data=np.asarray(resnet_features, np.float32))
+    f.create_dataset("resnet_scores", data=np.asarray(resnet_scores, np.float32))
     f.close()
 
 if __name__ == '__main__':
-    config = json.load(open("config.json"))
+    config = json.load(open("pytorch_a3c/config.json"))
     kitchen_scenes = config['rooms']['Kitchens']['scenes']
 
     # for scene in kitchen_scenes[:1]:
@@ -198,19 +205,23 @@ if __name__ == '__main__':
     #   dump_resnet(scene)
 
     tmp = models.resnet50(pretrained=True)
+    tmp.cuda()
     # tmp = models.inception_v3(pretrained=True)
     modules = list(tmp.children())[:-1]
     extractor = nn.Sequential(*modules)
-    extractor.cuda()
+    # extractor.cuda()
+
+    # tmp.cuda()
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
-    for scene in [
-                     "FloorPlan333",
-                     "FloorPlan305",
-                     "FloorPlan402",
-                     "FloorPlan403",
-                     "FloorPlan404"]:
+    for scene in [   'FloorPlan1',
+                     "FloorPlan2",
+                     # "FloorPlan28",
+                     "FloorPlan202",
+                     "FloorPlan203",
+                     "FloorPlan204",
+                     "FloorPlan303"]:
         # scene = "FloorPlan{}".format(i)
         dump(scene, config['resolution'])
-        dump_resnet(extractor, normalize, scene)
+        dump_resnet(tmp, extractor, normalize, scene)

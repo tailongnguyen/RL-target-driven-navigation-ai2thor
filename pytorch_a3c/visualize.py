@@ -18,17 +18,19 @@ def foo_all(folder):
     tasks = [] 
     for f in files:    
         sc = pickle.load(open(folder+'/' + f, 'rb'))
-        print(f, len(sc))     
-        tasks.append(sc[:14000])
+        tasks.append(sc)
+
+    min_length = min([len(s) for s in tasks])
+
       
-    avg = np.mean(tasks, 0)
+    avg = np.mean([s[:min_length] for s in tasks], 0)
     smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
     plt.plot(range(len(smoothed_y)), smoothed_y, c='C1')
     plt.plot(range(len(avg)), avg, alpha=0.3, c='C1')
     plt.show()
 
 def foo(folder):
-    files = [f for f in os.listdir(folder) if '.pth' not in f]
+    files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
     
     tasks = {} 
     for f in files:
@@ -39,7 +41,8 @@ def foo(folder):
             tasks[t].append(pickle.load(open(folder+'/' + f, 'rb')))
 
     for k, v in tasks.items():
-        avg = np.mean(v, 0).tolist()  
+        min_length = min([len(vi) for vi in v])
+        avg = np.mean([vi[:min_length] for vi in v], 0).tolist()  
         plt.plot(range(len(avg)), avg, label=k)
     plt.legend()
     plt.show()

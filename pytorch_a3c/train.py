@@ -57,6 +57,7 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
     # monitoring
     total_reward_for_num_steps_list = []
+    success = []
 
     total_length = 0
     start = time.time()
@@ -88,6 +89,11 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
             action_int = action.cpu().numpy()[0][0].item()
             state, reward, done = env.step(action_int)
+
+            if done:
+                success.append(1)
+            elif episode_length >= arguments['max_episode_length']:
+                success.append(0)
 
             done = done or episode_length >= arguments['max_episode_length']
 
@@ -153,7 +159,8 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
         if (epoch + 1) % 1000 == 0:
             with open('training-history/{}/{}_{}_{}.pkl'.format(arguments['about'], training_scene, train_object, rank), 'wb') as f:
-                pickle.dump(total_reward_for_num_steps_list, f, pickle.HIGHEST_PROTOCOL)
+                pickle.dump({"rewards": total_reward_for_num_steps_list, 
+                            "success_rate": success}, f, pickle.HIGHEST_PROTOCOL)
 
             torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
 

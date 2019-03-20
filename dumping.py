@@ -18,6 +18,10 @@ ALL_POSSIBLE_ACTIONS = [
 ]
 
 def cal_min_dist(index, all_locs, loc2idx):
+    '''
+    Calculate min distances from one particular position (index) to all other positions in environment 
+    * currently support only grid size of 0.5
+    '''
     distance = [-1] * len(all_locs)
     distance[index] = 0
     move = [[0, 0.5], [0, -0.5], [0.5, 0], [-0.5, 0]]
@@ -51,6 +55,18 @@ def cal_min_dist(index, all_locs, loc2idx):
 
 
 def dump(scene="FloorPlan21", resolution=(300, 300)):
+    '''
+    Dump needed data to hdf5 file to speed up training. Dumped file can be loaded using: f = h5py.File(filename, 'r'), where:
+    - f['locations'][()]: numpy array of all states in format (x, z, rotation, looking angle)
+    - f['observations'][()]: numpy array of RGB images of corresponding states in f['locations']
+    - f['graph'][()]: numpy array representing transition graph between states. e.g: f[0] = array([ 16., 272.,   4.,  12.,   1.,  -1.], dtype=float32)
+        means from 1st locations, the agent will reach 16th state by taking action 0 (move forward), 272th state by taking action 1 (move backward),
+        reach 4th state by taking action 2 (rotate right), reach 12th state by taking action 3 (rotate left), 
+        reach 1th state by taking action 4 (look down) and cannot take action 5 (look up) indicated by -1 value.
+    - f['visible_objects'][()]: visible objects at corresponding states in f['locations']
+    - f['shortest'][()]: numpy array with shape of (num_states, num_states) indicating the shortest path length between 
+        every pair of states.
+    '''
 
     f = h5py.File("dumped/{}.hdf5".format(scene), "w")
 
@@ -68,6 +84,9 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     y_coord = event.metadata['agent']['position']['y']
 
     locations.append((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
+
+    # Using BFS to discover all reachable positions in current environment.
+
     visited = set()
     visited.add((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
 
@@ -87,10 +106,15 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     print("{} locations".format(len(all_locs)))
     states = []
 
+    # Adding rotations and looking angles
     for loc in all_locs:
         for rot in [0, 90, 180, 270]:
             for horot in [-30, 0, 30, 60]:
                 states.append((loc[0], loc[1], rot, horot))
+
+    # ------------------------------------------------------------------------------
+
+    ## Calculate shortest path length array
 
     sta2idx = dict(zip(states, range(len(states))))
     loc2idx = dict(zip(all_locs, range(len(all_locs))))
@@ -111,6 +135,10 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
                 to_loc = loc2idx[states[j][0], states[j][1]]
                 shortest_state[i, j] = shortest_loc[from_loc, to_loc]
                 shortest_state[j, i] = shortest_state[i, j]
+
+    # ------------------------------------------------------------------------------
+
+    # Building transition graph
 
     graph = np.zeros(shape=(len(states), 6), dtype=np.float32)
 
@@ -144,6 +172,10 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
             else:
                 graph[state_idx][i] = -1
 
+    # ------------------------------------------------------------------------------
+
+    # Adding observations 
+
     for state in states:
         event = controller.step(dict(action='TeleportFull', x=state[0], y=y_coord, z=state[1], rotation=state[2], horizon=state[3]))
 
@@ -157,6 +189,8 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
         else:
             visible_objects.append("")
 
+    # ------------------------------------------------------------------------------
+
     print("{} states".format(len(states)))
 
     controller.stop()
@@ -169,6 +203,10 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     f.close()
 
 def dump_resnet(tmp, extractor, normalize, scene="FloorPlan28"):
+    '''
+    Load a hdf5 file and add resnet features and classification scores corresponding to observations.
+    '''
+    
     f = h5py.File("dumped/{}.hdf5".format(scene), "a")
     observations = f['observations']
     resnet_features = []
@@ -215,13 +253,13 @@ if __name__ == '__main__':
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
-    for scene in [   'FloorPlan1',
-                     "FloorPlan2",
+    for scene in [   'FloorPlan11']:
+                     # "FloorPlan2",
                      # "FloorPlan28",
-                     "FloorPlan202",
-                     "FloorPlan203",
-                     "FloorPlan204",
-                     "FloorPlan303"]:
+                     # "FloorPlan202",
+                     # "FloorPlan203",
+                     # "FloorPlan204",
+                     # "FloorPlan303"]:
         # scene = "FloorPlan{}".format(i)
         dump(scene, config['resolution'])
         dump_resnet(tmp, extractor, normalize, scene)

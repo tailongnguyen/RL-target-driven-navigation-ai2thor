@@ -22,6 +22,9 @@ import json
 import os
 import sys
 import pickle
+import sys
+
+sys.path.append('..') # to access env package
 
 from env.ai2thor_env import AI2ThorDumpEnv
 from model import ActorCritic
@@ -38,8 +41,7 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
     torch.manual_seed(arguments['seed'] + rank)
 
     env = AI2ThorDumpEnv(training_scene, train_object, config, arguments)
-    env.seed(arguments['seed'] + rank)
-
+    
     model = ActorCritic(config, arguments)
     use_gpu = arguments['use_gpu']
     if use_gpu:
@@ -51,7 +53,7 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
     model.train()
 
-    state, target = env.reset()
+    state, score, target = env.reset()
     done = True
     print("Done resetting. Now find {} in {}!".format(env.target, env.scene))
 
@@ -59,7 +61,6 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
     total_reward_for_num_steps_list = []
     success = []
 
-    total_length = 0
     start = time.time()
 
     episode_length = 0
@@ -76,9 +77,8 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
         for step in range(arguments['num_iters']):
             episode_length += 1
-            total_length += 1
 
-            value, logit = model(state, None, target)
+            value, logit = model(state, score, target)
             prob = F.softmax(logit, dim=-1)
             log_prob = F.log_softmax(logit, dim=-1)
             entropy = -(log_prob * prob).sum(1, keepdim=True)
@@ -88,7 +88,10 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
             log_prob = log_prob.gather(1, action)
 
             action_int = action.cpu().numpy()[0][0].item()
-            state, reward, done = env.step(action_int)
+            state, score, reward, done = env.step(action_int)
+
+            if arguments['norm_reward']:
+                reward = max(min(reward, 1), -1)
 
             if done:
                 success.append(1)
@@ -105,13 +108,15 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
             rewards.append(reward)
 
             if done:
-                state, target = env.reset()
-                print('[P-{}] Episode length: {}. Total length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
-                        .format(rank, episode_length, total_length, sum(rewards), (time.time() - start) / 3600))
+                state, score, target = env.reset()
+                print('[P-{}] Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
+                        .format(rank, episode_length, sum(rewards), (time.time() - start) / 3600))
 
                 episode_length = 0
                 break
 
+        if not done:
+            success.append(0)
 
         # No interaction with environment below.
         # Monitoring
@@ -120,7 +125,7 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
         # Backprop and optimisation
         R = torch.zeros(1, 1)
         if not done:  # to change last reward to predicted value to ....
-            value, _, = model(state, None, target)
+            value, _, = model(state, score, target)
             R = value.detach()
 
         if use_gpu:
@@ -164,4 +169,6 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
 
             torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
 
+    with lock:
+        print("Done in steps {}th".format(counter.value))
     

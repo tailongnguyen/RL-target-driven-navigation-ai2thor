@@ -18,15 +18,11 @@ class GCN(nn.Module):
         self.dropout = dropout
 
     def forward(self, x, adj):
-        print(x.size())
         x = F.relu(self.gc1(x, adj))
         x = F.dropout(x, self.dropout, training=self.training)
-        print(x.size())
         x = F.relu(self.gc2(x, adj))
         x = F.dropout(x, self.dropout, training=self.training)
-        print(x.size())
         x = F.relu(self.gc3(x, adj))
-        print(x.size())
         return x
 
 
@@ -96,16 +92,16 @@ class ActorCritic(torch.nn.Module):
         
         if self.arguments['use_gcn']:
             scores = torch.from_numpy(scores).type(self.dtype)
+            scores = scores.view(1, scores.numel())
             scores_512 = F.relu(self.score_to_512(scores))
             nodes = []
             for i in range(self.num_objects):
                 em = torch.from_numpy(self.all_embeddings[i]).type(self.dtype)
                 em = em.view(1, em.size(0))
                 em_512 = F.relu(self.semantic_ft(em))
-                em_512 = em_512.view(512)
-                nodes.append(torch.cat((scores_512, em_512)))
+                nodes.append(torch.cat((scores_512, em_512), 1))
 
-            nodes = torch.stack(nodes)
+            nodes = torch.stack(nodes).squeeze()
             gcn_out = self.gcn(nodes, self.adj)
             gcn_out = gcn_out.view(1, gcn_out.numel())
             gcn_512 = F.relu(self.gcn_to_512(gcn_out))

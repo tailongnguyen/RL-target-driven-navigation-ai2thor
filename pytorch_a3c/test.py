@@ -13,6 +13,9 @@ import pickle
 import torch
 import torch.nn.functional as F
 import numpy as np
+import sys
+
+sys.path.append('..') # to access env package
 
 from env.ai2thor_env import AI2ThorDumpEnv
 from model import ActorCritic
@@ -21,7 +24,6 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
     torch.manual_seed(arguments['seed'] + rank)
 
     env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments)
-    env.seed(arguments['seed'] + rank)
 
     model = shared_model
     if model is not None:
@@ -30,7 +32,7 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
 
         model.eval()
 
-    state, target = env.reset()
+    state, score, target = env.reset()
     done = True
 
     start_time = time.time()
@@ -43,7 +45,7 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
         for step in range(arguments['num_iters']):
             if model is not None:
                 with torch.no_grad():
-                    value, logit = model(state, None, target)
+                    value, logit = model(state, score, target)
                 prob = F.softmax(logit, dim=-1)
                 # action = prob.max(1, keepdim=True)[1].numpy()
                 action = prob.multinomial(num_samples=1).detach().numpy()[0, 0]
@@ -51,7 +53,7 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
             else:
                 action = np.random.choice(range(arguments['action_size']))
 
-            state, reward, done = env.step(action)
+            state, score, reward, done = env.step(action)
             # a quick hack to prevent the agent from stucking
             # i.e. in test mode an agent can repeat an action ad infinitum
             actions.append(action)

@@ -7,26 +7,60 @@ import pickle
 parser = argparse.ArgumentParser(description='A3C')
 parser.add_argument('--mode', type=int, default=0,
                     help='visualization mode: \
-                    	0: all \
-                    	1: separated tasks')
+                        0: all \
+                        1: separated tasks')
 parser.add_argument('--folder', type=str, default='training-history/multitask_onehot/')
 
 smooth = 10
+
+def old_foo_all(folder):
+    files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
+
+    rewards = [] 
+    sc_rates = []
+    for f in files:    
+        sc = pickle.load(open(folder+'/' + f, 'rb'))
+        rewards.append(sc)        
+
+    min_length = min([len(s) for s in rewards])
+
+    labels = ['rewards', 'success_rate']
+
+    # for i, tasks in enumerate([rewards, sc_rates]):
+    for i, tasks in enumerate([rewards]):
+        avg = np.mean([s[:min_length] for s in tasks], 0)[::100]
+        smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
+        plt.plot(range(len(smoothed_y)), smoothed_y, c='C' + str(i), label=labels[i])
+        plt.plot(range(len(avg)), avg, alpha=0.3, c='C' + str(i), label=labels[i])
+
+    plt.legend()
+    plt.show()
+
 def foo_all(folder):
     files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
 
-    tasks = [] 
+    rewards = [] 
+    sc_rates = []
     for f in files:    
         sc = pickle.load(open(folder+'/' + f, 'rb'))
-        tasks.append(sc)
+        rewards.append(sc['rewards'])
+        sc_rates.append(sc['success_rate'])
+        # print(len(sc['rewards']), len(sc['success_rate']))
 
-    min_length = min([len(s) for s in tasks])
+    min_length = min([len(s) for s in rewards])
 
-      
-    avg = np.mean([s[:min_length] for s in tasks], 0)
-    smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
-    plt.plot(range(len(smoothed_y)), smoothed_y, c='C1')
-    plt.plot(range(len(avg)), avg, alpha=0.3, c='C1')
+    labels = ['rewards', 'success_rate']
+
+    for i, tasks in enumerate([rewards, sc_rates]):
+    # for i, tasks in enumerate([sc_rates]):
+        avg = np.mean([s[:min_length] for s in tasks], 0)[::100]
+        if i == 1:
+            avg *= 10
+        smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
+        plt.plot(range(len(smoothed_y)), smoothed_y, c='C' + str(i), label=labels[i])
+        plt.plot(range(len(avg)), avg, alpha=0.3, c='C' + str(i))
+
+    plt.legend()
     plt.show()
 
 def foo(folder):
@@ -36,21 +70,26 @@ def foo(folder):
     for f in files:
         t = '_'.join(f.split('_')[:2])
         if t not in tasks:
-            tasks[t] = [pickle.load(open(folder+'/' + f, 'rb'))]
+            tasks[t] = [pickle.load(open(folder+'/' + f, 'rb'))['rewards']]
         else:
-            tasks[t].append(pickle.load(open(folder+'/' + f, 'rb')))
+            tasks[t].append(pickle.load(open(folder+'/' + f, 'rb'))['rewards'])
 
     for k, v in tasks.items():
         min_length = min([len(vi) for vi in v])
-        avg = np.mean([vi[:min_length] for vi in v], 0).tolist()  
+        avg = np.mean([vi[:min_length] for vi in v], 0)[::200]
+        smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
         plt.plot(range(len(avg)), avg, label=k)
+
     plt.legend()
     plt.show()
 
 
 if __name__ == '__main__':
-	args = parser.parse_args()
-	if args.mode == 0:
-		foo_all(args.folder)
-	else:
-		foo(args.folder)
+    args = parser.parse_args()
+    if args.mode == 0:
+        try:
+            foo_all(args.folder)
+        except:
+            old_foo_all(args.folder)
+    else:
+        foo(args.folder)

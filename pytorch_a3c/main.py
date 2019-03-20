@@ -8,13 +8,15 @@ Example of use:
 Runs A3C on our AI2ThorEnv wrapper with default params (4 processes). Optionally it can be
 run on any atari environment as well using the --atari and --atari-env-name params.
 """
-
+import sys
 import argparse
 import os
 import numpy as np
 import torch
 import torch.multiprocessing as mp
 import json
+
+sys.path.append('..') # to access env package
 
 from env.ai2thor_env import AI2ThorDumpEnv
 from optimizers import SharedAdam, SharedRMSprop
@@ -26,8 +28,9 @@ from train import train
 # https://github.com/pytorch/examples/tree/master/mnist_hogwild
 # Training settings
 parser = argparse.ArgumentParser(description='A3C')
-parser.add_argument('--about', type=str, default="training A3C",
-                    help='description about training')
+parser.add_argument('--about', type=str, default="training A3C", required=True,
+                    help='description about training, also the name of saving directory, \
+                            just a way to control which test case was run')
 parser.add_argument('--lr', type=float, default=7e-4,
                     help='learning rate (default: 7e-4)')
 parser.add_argument('--gamma', type=float, default=0.99,
@@ -64,18 +67,22 @@ parser.add_argument('--use_gpu', type=int, default=0,
                     help='whether to use gpu to train')
 parser.add_argument('--history_size', type=int, default=4,
                     help='whether to stack frames')
+parser.add_argument('--optim', type=int, default=0,
+                    help='optimizer: 0 for Adam, 1 for RMSprop')
 parser.add_argument('--embed', type=int, default=0,
                     help='embedding mode: 0 for onehot, 1 for fasttext')
 parser.add_argument('--use_gcn', type=int, default=0,
                     help='whether to include gcn')
 parser.add_argument('--anti_col', type=int, default=0,
                     help='whether to include collision penalty to rewarding scheme')
+parser.add_argument('--norm_reward', type=int, default=0,
+                    help='whether to normalize received reward to [-1, 1]')
 parser.add_argument('--no_shared', type=int, default=0,
                     help='use an optimizer without shared momentum.')
 parser.add_argument('--scene_id', type=int, default=0,
                         help='scene id (default: 0)')
 
-parser.add_argument('--config_file', type=str, default="config.json")
+parser.add_argument('--config_file', type=str, default="../config.json")
 parser.add_argument('--weights', type=str, default=None)
 
 ALL_ROOMS = {
@@ -105,7 +112,7 @@ if __name__ == '__main__':
 
     print(list(zip(range(len(trainable_objects)), trainable_objects)))
 
-    command = input("Please specify target id: ")
+    command = input("Please specify target ids, you can choose either individually (e.g: 0,1,2) or by range (e.g: 0-4)\nYour input:")
     if '-' not in command:
         target_ids = [int(i.strip()) for i in command.split(",")]
     else:
@@ -131,14 +138,15 @@ if __name__ == '__main__':
     if args.use_gpu:
         shared_model.cuda()
 
-    # env.close()  # above env initialisation was only to find certain params needed
-
     scheduler = None
     if args.no_shared:
         optimizer = None
     else:
-        # optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
-        optimizer = SharedRMSprop(shared_model.parameters(), lr=args.lr)
+        if args.optim == 0:
+            optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
+        else:
+            optimizer = SharedRMSprop(shared_model.parameters(), lr=args.lr)
+
         optimizer.share_memory()
         if args.lr_decay:
             decay_step = (args.lr - 1e-6) / (args.num_epochs * args.num_processes)
@@ -146,7 +154,6 @@ if __name__ == '__main__':
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
     processes = []
-
 
     if not args.test:
         counter = mp.Value('i', 0)

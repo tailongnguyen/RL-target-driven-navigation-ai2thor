@@ -1,6 +1,9 @@
 import numpy as np           		
-from utils import noise_and_argmax
+import sys
+
+sys.path.append('..') # to access env package
 from env.ai2thor_env import AI2ThorDumpEnv
+from utils import noise_and_argmax
 
 class RolloutThread(object):
 	

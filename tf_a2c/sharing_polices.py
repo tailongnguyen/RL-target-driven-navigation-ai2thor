@@ -6,8 +6,11 @@ import json
 import time
 import h5py
 import pickle
-from datetime import datetime
+import sys
 
+sys.path.append('..') # to access env package
+
+from datetime import datetime
 from model import *
 from rollout import Rollout
 from env.ai2thor_env import AI2ThorDumpEnv

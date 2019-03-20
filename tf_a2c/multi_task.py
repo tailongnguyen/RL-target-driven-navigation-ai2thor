@@ -6,6 +6,10 @@ import json
 import time
 import h5py
 import pickle
+import sys
+
+sys.path.append('..') # to access env package
+
 from datetime import datetime
 
 from model import *
@@ -252,7 +256,7 @@ class MultiTaskPolicy(object):
 				else:
 					mb_task_inputs += [self.embeddings[task_index].tolist()] * len(task_states)
 
-				success_rates.append(round(task_success_count / (self.num_episodes * len(self.training_objects)), 3))
+				success_rates.append(round(task_success_count / self.num_episodes, 3))
 
 				assert len(task_states) == len(task_actions) == len(task_returns) == len(task_advantages)
 			
@@ -263,7 +267,7 @@ class MultiTaskPolicy(object):
 				total_samples += len(list(np.concatenate(task_rewards)))
 
 			all_batch = list(zip(mb_states, mb_advantages, mb_actions, mb_returns, mb_task_inputs))
-			np.random.shuffle(all_batch)
+			# np.random.shuffle(all_batch)
 			mb_states, mb_advantages, mb_actions, mb_returns, mb_task_inputs = zip(*all_batch)
 			
 			num_batch = len(mb_states) // batch_size + 1

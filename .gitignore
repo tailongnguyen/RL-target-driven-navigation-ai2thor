@@ -1,4 +1,5 @@
 dumped/
 */training-history/*
+__pycache__
 */__pycache__/
 *.ipynb

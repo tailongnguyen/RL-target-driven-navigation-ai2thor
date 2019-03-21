@@ -45,7 +45,7 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
     model = ActorCritic(config, arguments)
     use_gpu = arguments['use_gpu']
     if use_gpu:
-        model.cuda()
+        model.cuda(1)
 
     if optimizer is None:
         optimizer = optim.RMSprop(shared_model.parameters(), lr=arguments['lr'])

@@ -15,8 +15,8 @@
                   "Pencil", "Blinds", "SoapBottle", "Lamp", "TowelHolder", "Statue", "Mirror", "Newspaper", 
                   "WateringCan", "Television", "AlarmClock", "CreditCard"],
    "picked": {
-       "FloorPlan1": {"train": ["CoffeeMachine", "Fridge", "Lettuce",  "TableTop", "Plate", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],
-                    "test": ["Toaster", "Mug", "Microwave", "Apple"]},
+       "FloorPlan1": {"train": ["Fridge", "Cabinet", "Plate", "Potato", "StoveKnob", "StoveBurner", "TableTop", "Tomato", "CoffeeMachine", "Sink"],
+                    "test": ["Toaster", "Microwave"]},
        "FloorPlan2": {"train": ["CoffeeMachine", "Fridge", "TableTop", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],
                     "test": ["Microwave"]},
        "FloorPlan28": {"train": ["CoffeeMachine", "Fridge", "TableTop", "StoveKnob", "Cabinet", "Sink", "StoveBurner"],

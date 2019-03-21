@@ -21,7 +21,7 @@ sys.path.append('..') # to access env package
 from env.ai2thor_env import AI2ThorDumpEnv
 from optimizers import SharedAdam, SharedRMSprop
 from model import ActorCritic
-from test import test
+from test import test, live_test
 from train import train
 
 # Based on
@@ -51,9 +51,11 @@ parser.add_argument('--room_id', type=int, default=0,
                     help='room id (default: 0)')
 parser.add_argument('--test', type=int, default=0,
                     help='whether to activate testing phase')
+parser.add_argument('--live_test', type=int, default=0,
+                    help='whether to activate live testing phase')
 parser.add_argument('--action_size', type=int, default=4,
                     help='number of possible actions')
-parser.add_argument('--num_processes', type=int, default=4,
+parser.add_argument('--num_processes', type=int, default=20,
                     help='how many training processes to use (default: 1)')
 parser.add_argument('--num_iters', type=int, default=100,
                     help='number of forward steps in A3C (default: 20)')
@@ -79,8 +81,12 @@ parser.add_argument('--norm_reward', type=int, default=0,
                     help='whether to normalize received reward to [-1, 1]')
 parser.add_argument('--no_shared', type=int, default=0,
                     help='use an optimizer without shared momentum.')
-parser.add_argument('--scene_id', type=int, default=0,
-                        help='scene id (default: 0)')
+parser.add_argument('--scene_id', type=int, default=1,
+                        help='scene id (default: 1)')
+parser.add_argument('--hard', type=int, default=0,
+                        help='whether to make environment harder\
+                            0: agent only has to reach the correct position\
+                            1: agent has to reach the correct position and has right rotation')
 
 parser.add_argument('--config_file', type=str, default="../config.json")
 parser.add_argument('--weights', type=str, default=None)
@@ -99,7 +105,8 @@ def read_config(config_path):
     return config
 
 if __name__ == '__main__':
-    os.environ['OMP_NUM_THREADS'] = '1'
+    # os.environ['OMP_NUM_THREADS'] = '1'
+    # mp.set_start_method('forkserver')
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -136,7 +143,7 @@ if __name__ == '__main__':
     shared_model.share_memory()
 
     if args.use_gpu:
-        shared_model.cuda()
+        shared_model.cuda(1)
 
     scheduler = None
     if args.no_shared:
@@ -155,27 +162,7 @@ if __name__ == '__main__':
 
     processes = []
 
-    if not args.test:
-        counter = mp.Value('i', 0)
-        lock = mp.Lock()
-        # test runs continuously and if episode ends, sleeps for args.test_sleep_time seconds
-        # p = mp.Process(target=test, args=(training_scene, training_object, args.num_processes, \
-        #                 shared_model, config, counter, vars(args)))
-        # p.start()
-        # processes.append(p)
-
-        for rank in range(0, args.num_processes):
-            p = mp.Process(target=train, args=(training_scene, object_threads[rank], rank, shared_model, \
-                            scheduler, counter, lock, config, vars(args), optimizer))
-            p.start()
-            processes.append(p)
-
-        for p in processes:
-            p.join()
-
-        with open('training-history/{}/arguments.json'.format(args.about), 'w') as outfile:
-            json.dump(vars(args), outfile)
-    else:
+    if args.live_test:
         print("Start testing ..")
         if args.weights is not None:
             shared_model.load_state_dict(torch.load(args.weights))
@@ -183,15 +170,46 @@ if __name__ == '__main__':
         else:
             shared_model = None
 
-        results = mp.Array('f', len(training_objects))
-        for rank, obj in enumerate(training_objects):
-            p = mp.Process(target=test, args=(training_scene, obj, rank, shared_model, \
-                            results, config, vars(args)))
-            p.start()
-            processes.append(p)
+        assert len(training_objects) == 1, "You should choose only 1 target for live test."
+        live_test(training_scene, training_objects[0], shared_model, config, vars(args))
+    else:
+        if not args.test:
+            counter = mp.Value('i', 0)
+            lock = mp.Lock()
+            # test runs continuously and if episode ends, sleeps for args.test_sleep_time seconds
+            # p = mp.Process(target=test, args=(training_scene, training_object, args.num_processes, \
+            #                 shared_model, config, counter, vars(args)))
+            # p.start()
+            # processes.append(p)
 
-        for p in processes:
-            p.join()
+            for rank in range(0, args.num_processes):
+                p = mp.Process(target=train, args=(training_scene, object_threads[rank], rank, shared_model, \
+                                scheduler, counter, lock, config, vars(args), optimizer))
+                p.start()
+                processes.append(p)
 
-        print("Testing accuracies:", list(zip(training_objects, results[:])))
+            for p in processes:
+                p.join()
+
+            with open('training-history/{}/arguments.json'.format(args.about), 'w') as outfile:
+                json.dump(vars(args), outfile)
+        else:
+            print("Start testing ..")
+            if args.weights is not None:
+                shared_model.load_state_dict(torch.load(args.weights))
+                print("loaded model")
+            else:
+                shared_model = None
+
+            results = mp.Array('f', len(training_objects))
+            for rank, obj in enumerate(training_objects):
+                p = mp.Process(target=test, args=(training_scene, obj, rank, shared_model, \
+                                results, config, vars(args)))
+                p.start()
+                processes.append(p)
+
+            for p in processes:
+                p.join()
+
+            print("Testing accuracies:", list(zip(training_objects, results[:])))
         

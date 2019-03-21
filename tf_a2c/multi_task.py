@@ -50,7 +50,7 @@ class MultiTaskPolicy(object):
 
 		self.rollouts = []
 		if arguments['embed']:
-			self.embeddings = pickle.load(open(config['embeddings'], 'rb')) 
+			self.embeddings = pickle.load(open(config['embeddings_fasttext'], 'rb')) 
 			for obj in training_objects:
 				self.rollouts.append(Rollout(training_scene, obj, config, arguments, self.embeddings[obj].tolist()))
 		else:

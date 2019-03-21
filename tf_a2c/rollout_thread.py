@@ -31,7 +31,7 @@ class RolloutThread(object):
 	def rollout(self, return_state_ids=False):
 		states, pis, actions, rewards, values, last_value = [], [], [], [], [], []
 		
-		state, target = self.env.reset()
+		state, score, target = self.env.reset()
 		start = self.env.current_state_id
 		step = 0
 
@@ -64,7 +64,7 @@ class RolloutThread(object):
 			else:
 				states.append(state)
 				
-			next_state, reward, done = self.env.step(action)
+			next_state, score, reward, done = self.env.step(action)
 			
 			# Store results
 			pis.append(p.ravel().tolist())

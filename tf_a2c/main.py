@@ -94,7 +94,7 @@ if __name__ == '__main__':
                         help='Number of steps to be sampled in each episode')
     parser.add_argument('--gpu_fraction', nargs='?', type=float, default=0.15,
                         help='GPU memory usage fraction')
-    parser.add_argument('--lr', nargs='?', type=float, default=1e-4,
+    parser.add_argument('--lr', nargs='?', type=float, default=7e-4,
                         help='Learning rate')
     parser.add_argument('--use_gae', nargs='?', type=int, default=1,
                         help='Whether to use generalized advantage estimate')
@@ -112,13 +112,13 @@ if __name__ == '__main__':
                         help='Value loss coeff in total loss')
     parser.add_argument('--dropout', nargs='?', type=float, default=-1,
                         help='Value loss coeff in total loss')
-    parser.add_argument('--max_gradient_norm', nargs='?', type=float, default=0.5,
+    parser.add_argument('--max_gradient_norm', nargs='?', type=float, default=50,
                         help='')
-    parser.add_argument('--anti_col', type=int, default=1,
+    parser.add_argument('--anti_col', type=int, default=0,
                         help='whether to include collision penalty to rewarding scheme')
     parser.add_argument('--train_resnet', type=int, default=0,
                         help='whether to include resnet into training')
-    parser.add_argument('--history_size', type=int, default=1,
+    parser.add_argument('--history_size', type=int, default=4,
                         help='number of frames to be stacked as input')
     parser.add_argument('--action_size', type=int, default=4,
                         help='number of possible actions')

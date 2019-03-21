@@ -37,6 +37,7 @@ class AI2ThorDumpEnv():
         self.features = self.h5_file['resnet_features'][()]
         self.scores = self.h5_file['resnet_scores'][()]
         self.visible_objects = self.h5_file['visible_objects'][()]
+        self.observations = self.h5_file['observations'][()]
 
         assert self.action_size <= self.graph.shape[1], "The number of actions exceeds the limit of environment."
 
@@ -47,7 +48,15 @@ class AI2ThorDumpEnv():
             self.sharing = self.h5_file['sharing'][()].tolist()
 
         self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
-        self.target_locs = set([tuple(self.states[idx][:2]) for idx in self.target_ids])
+
+        if self.arguments['hard']:
+            # agent has to reach the correct position and has right rotation
+            self.offset = 3
+        else:
+            # agent only has to reach the correct position
+            self.offset = 2
+
+        self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])
         
         self.action_space = self.action_size 
         self.cv_action_onehot = np.identity(self.action_space)
@@ -78,34 +87,34 @@ class AI2ThorDumpEnv():
             if self.action_size == self.graph.shape[1]:
                 if self.current_state_id in self.target_ids:
                     self.terminal = True
-                    collided = False
+                    self.collided = False
                 else:
                     self.terminal = False
-                    collided = False
+                    self.collided = False
             else:
-                if tuple(self.states[self.current_state_id][:2]) in self.target_locs:
+                if tuple(self.states[self.current_state_id][:self.offset]) in self.target_locs:
                     self.terminal = True
-                    collided = False
+                    self.collided = False
                 else:
                     self.terminal = False
-                    collided = False
+                    self.collided = False
         else:
             self.terminal = False
-            collided = True
+            self.collided = True
 
-        reward, done = self.transition_reward(collided)
+        reward, done = self.transition_reward()
 
         self.update_states()
 
         return self.history_states, self.scores[self.current_state_id], reward, done
 
-    def transition_reward(self, collided):
+    def transition_reward(self):
         reward = self.config['default_reward']
         done = 0
         if self.terminal:
             reward = self.config['success_reward']
             done = 1
-        elif self.arguments['anti_col'] and collided:
+        elif self.arguments['anti_col'] and self.collided:
             reward = self.config['collide_reward']
 
         return reward, done

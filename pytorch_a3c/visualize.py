@@ -10,8 +10,9 @@ parser.add_argument('--mode', type=int, default=0,
                         0: all \
                         1: separated tasks')
 parser.add_argument('--folder', type=str, default='training-history/multitask_onehot/')
+parser.add_argument('--save', type=int, default=0)
 
-smooth = 10
+smooth = 5
 
 def old_foo_all(folder):
     files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
@@ -36,32 +37,50 @@ def old_foo_all(folder):
     plt.legend()
     plt.show()
 
-def foo_all(folder):
+def foo_all(folder, save):
+    fig = plt.figure()
     files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
 
     rewards = [] 
     sc_rates = []
+    redundancies = []
+    entropies = []
     for f in files:    
         sc = pickle.load(open(folder+'/' + f, 'rb'))
         rewards.append(sc['rewards'])
         sc_rates.append(sc['success_rate'])
+        try:
+            redundancies.append(sc['redundancies'])
+            entropies.append(sc['entropies'])
+        except:
+            pass
         # print(len(sc['rewards']), len(sc['success_rate']))
 
-    min_length = min([len(s) for s in rewards])
+    all_labels = [['rewards', 'success_rate (scale x 10)', 'entropies (scale x 10)'], ['redundancies']]
+    all_tasks = [[rewards, sc_rates, entropies], [redundancies]]
+    for li, (labels, all_tasks) in enumerate(zip(all_labels, all_tasks)):
+        plt.subplot(1, 2, li+1)
+        for i, tasks in enumerate(all_tasks):
+        # for i, tasks in enumerate([sc_rates]):
+            try:
+                min_length = min([len(s) for s in tasks]) // 5
+            except:
+                continue
+            avg = np.mean([s[:min_length] for s in tasks], 0)[::20]
+            if li == 0 and i > 0:
+                avg *= 10
+            smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
+            plt.plot(range(len(smoothed_y)), smoothed_y, c='C' + str(i), label=labels[i])
+            plt.plot(range(len(avg)), avg, alpha=0.3, c='C' + str(i))
 
-    labels = ['rewards', 'success_rate']
+        plt.legend()
 
-    for i, tasks in enumerate([rewards, sc_rates]):
-    # for i, tasks in enumerate([sc_rates]):
-        avg = np.mean([s[:min_length] for s in tasks], 0)[::100]
-        if i == 1:
-            avg *= 10
-        smoothed_y = [np.mean(avg[max(0, yi - smooth):min(yi + smooth, len(avg)-1)]) for yi in range(len(avg))]
-        plt.plot(range(len(smoothed_y)), smoothed_y, c='C' + str(i), label=labels[i])
-        plt.plot(range(len(avg)), avg, alpha=0.3, c='C' + str(i))
-
-    plt.legend()
-    plt.show()
+    if save:
+        title = input("Figure title:")
+        fig.set_size_inches(10, 5)
+        plt.savefig('../images/{}.png'.format(title), bbox_inches='tight')
+    else:
+        plt.show()
 
 def foo(folder):
     files = [f for f in os.listdir(folder) if f.endswith('.pkl')]
@@ -88,7 +107,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.mode == 0:
         try:
-            foo_all(args.folder)
+            foo_all(args.folder, args.save)
         except:
             old_foo_all(args.folder)
     else:

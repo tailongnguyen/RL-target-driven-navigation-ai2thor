@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 import json
+import h5py
 
 sys.path.append('..') # to access env package
 
@@ -22,7 +23,7 @@ from env.ai2thor_env import AI2ThorDumpEnv
 from optimizers import SharedAdam, SharedRMSprop
 from model import ActorCritic
 from test import test, live_test
-from train import train
+from train import train, train_multi
 
 # Based on
 # https://github.com/pytorch/examples/tree/master/mnist_hogwild
@@ -33,6 +34,8 @@ parser.add_argument('--about', type=str, default="training A3C", required=True,
                             just a way to control which test case was run')
 parser.add_argument('--lr', type=float, default=7e-4,
                     help='learning rate (default: 7e-4)')
+parser.add_argument('--dropout', type=float, default=0.0,
+                    help='Probabilities that neurons are zeroed in the first layer of visual branch.')
 parser.add_argument('--gamma', type=float, default=0.99,
                     help='discount factor for rewards (default: 0.99)')
 parser.add_argument('--tau', type=float, default=0.96,
@@ -49,6 +52,10 @@ parser.add_argument('--seed', type=int, default=1,
                     help='random seed (default: 1)')
 parser.add_argument('--room_id', type=int, default=0,
                     help='room id (default: 0)')
+parser.add_argument('--use_gae', type=int, default=1,
+                    help='whether to use GAE to compute policy loss')
+parser.add_argument('--pca', type=int, default=0,
+                    help='whether to use pca-version of resnet features as input')
 parser.add_argument('--test', type=int, default=0,
                     help='whether to activate testing phase')
 parser.add_argument('--live_test', type=int, default=0,
@@ -65,13 +72,17 @@ parser.add_argument('--max_episode_length', type=int, default=1000000,
                     help='maximum length of an episode (default: 1000000)')
 parser.add_argument('--train_resnet', type=int, default=0,
                     help='whether to include resnet into training')
-parser.add_argument('--use_gpu', type=int, default=0,
-                    help='whether to use gpu to train')
 parser.add_argument('--history_size', type=int, default=4,
                     help='whether to stack frames')
-parser.add_argument('--optim', type=int, default=0,
+parser.add_argument('--optim', type=int, default=1,
                     help='optimizer: 0 for Adam, 1 for RMSprop')
-parser.add_argument('--embed', type=int, default=0,
+parser.add_argument('--multi_scene', type=int, default=0,
+                    help='whether to train on multiple scenes')
+parser.add_argument('--lstm', type=int, default=0,
+                    help='whether to use lstm instead of stacking features')
+parser.add_argument('--onehot', type=int, default=0,
+                    help='whether to use onehot vector as input feature')
+parser.add_argument('--embed', type=int, default=1,
                     help='embedding mode: 0 for onehot, 1 for fasttext')
 parser.add_argument('--use_gcn', type=int, default=0,
                     help='whether to include gcn')
@@ -82,14 +93,18 @@ parser.add_argument('--norm_reward', type=int, default=0,
 parser.add_argument('--no_shared', type=int, default=0,
                     help='use an optimizer without shared momentum.')
 parser.add_argument('--scene_id', type=int, default=1,
-                        help='scene id (default: 1)')
+                    help='scene id (default: 1)')
+parser.add_argument('--gpu_ids', type=int, default=-1,
+                    nargs='+', help='GPUs to use [-1 CPU only] (default: -1)')
+parser.add_argument('--easy', type=int, default=0,
+                    help='Whether to randomly choose a target location and use as a single target.')
 parser.add_argument('--hard', type=int, default=0,
-                        help='whether to make environment harder\
-                            0: agent only has to reach the correct position\
-                            1: agent has to reach the correct position and has right rotation')
+                    help='whether to make environment harder\
+                        0: agent only has to reach the correct position\
+                        1: agent has to reach the correct position and has right rotation')
 
 parser.add_argument('--config_file', type=str, default="../config.json")
-parser.add_argument('--weights', type=str, default=None)
+parser.add_argument('--folder', type=str, default=None)
 
 ALL_ROOMS = {
     0: "Kitchens",
@@ -104,112 +119,237 @@ def read_config(config_path):
             config = json.load(f)
     return config
 
-if __name__ == '__main__':
-    # os.environ['OMP_NUM_THREADS'] = '1'
-    # mp.set_start_method('forkserver')
-    args = parser.parse_args()
+def read_weights(folder):
+    weights = np.random.choice([f for f in os.listdir(folder) if f.endswith('.pth')])
+    arguments = json.load(open(folder + '/arguments.json'))
 
+    return os.path.join(folder, weights), arguments
+
+if __name__ == '__main__':
+    os.environ['OMP_NUM_THREADS'] = '1'
+    args = parser.parse_args()
     torch.manual_seed(args.seed)
-    
+    if args.gpu_ids == -1:
+        args.gpu_ids = [-1]
+    else:
+        torch.cuda.manual_seed(args.seed)
+        mp.set_start_method('forkserver', force=True)
+
     config = read_config(args.config_file)
     room = config['rooms'][ALL_ROOMS[args.room_id]]
+    picked = config['picked']
 
     training_scene = "FloorPlan{}".format(args.scene_id)
     trainable_objects = config["picked"][training_scene]['train']
-
-    print(list(zip(range(len(trainable_objects)), trainable_objects)))
-
-    command = input("Please specify target ids, you can choose either individually (e.g: 0,1,2) or by range (e.g: 0-4)\nYour input:")
-    if '-' not in command:
-        target_ids = [int(i.strip()) for i in command.split(",")]
-    else:
-        target_ids = list(range(int(command.split('-')[0]), int(command.split('-')[1]) + 1))
-
-    training_objects = [trainable_objects[target_id] for target_id in target_ids]
-    num_thread_each = args.num_processes // len(training_objects)
-    object_threads = []
-
-    for obj in training_objects:
-        object_threads += [obj] * num_thread_each
-
-    object_threads += [np.random.choice(training_objects)] * (args.num_processes - len(object_threads))
-
-    if not os.path.isdir("training-history/{}".format(args.about)):
-        os.mkdir("training-history/{}".format(args.about))
-
-    print("Start training agent to find {} in {}".format(training_objects, training_scene))
-
-    shared_model = ActorCritic(config, vars(args))
-    shared_model.share_memory()
-
-    if args.use_gpu:
-        shared_model.cuda(1)
-
-    scheduler = None
-    if args.no_shared:
-        optimizer = None
-    else:
-        if args.optim == 0:
-            optimizer = SharedAdam(shared_model.parameters(), lr=args.lr)
-        else:
-            optimizer = SharedRMSprop(shared_model.parameters(), lr=args.lr)
-
-        optimizer.share_memory()
-        if args.lr_decay:
-            decay_step = (args.lr - 1e-6) / (args.num_epochs * args.num_processes)
-            lambda1 = lambda epoch: args.lr - epoch * decay_step
-            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
-
-    processes = []
+    testing_objects = config["picked"][training_scene]['test']
 
     if args.live_test:
         print("Start testing ..")
-        if args.weights is not None:
-            shared_model.load_state_dict(torch.load(args.weights))
+        if args.folder is not None:
+            weights, arguments = read_weights(args.folder)
+            shared_model = ActorCritic(config, arguments)
+            shared_model.share_memory()
+
+            shared_model.load_state_dict(torch.load(weights))
             print("loaded model")
         else:
+            print("*weights not found, testing random agent ..")
             shared_model = None
 
-        assert len(training_objects) == 1, "You should choose only 1 target for live test."
-        live_test(training_scene, training_objects[0], shared_model, config, vars(args))
+        print(list(zip(range(len(trainable_objects)), trainable_objects)))
+        command = input("Please specify target ids, you can choose either individually (e.g: 0,1,2) or by range (e.g: 0-4)\nYour input:")
+        if '-' not in command:
+            target_ids = [int(i.strip()) for i in command.split(",")]
+        else:
+            target_ids = list(range(int(command.split('-')[0]), int(command.split('-')[1]) + 1))
+
+        training_objects = [trainable_objects[target_id] for target_id in target_ids]
+
+        live_test(training_scene, training_objects, shared_model, config, arguments)
     else:
         if not args.test:
-            counter = mp.Value('i', 0)
-            lock = mp.Lock()
-            # test runs continuously and if episode ends, sleeps for args.test_sleep_time seconds
-            # p = mp.Process(target=test, args=(training_scene, training_object, args.num_processes, \
-            #                 shared_model, config, counter, vars(args)))
-            # p.start()
-            # processes.append(p)
+            arguments = vars(args)
 
-            for rank in range(0, args.num_processes):
-                p = mp.Process(target=train, args=(training_scene, object_threads[rank], rank, shared_model, \
-                                scheduler, counter, lock, config, vars(args), optimizer))
-                p.start()
-                processes.append(p)
+            if args.folder is not None:
+                weights, loaded_arguments = read_weights(args.folder)
+                continued = True
+                arguments.update(loaded_arguments)
+            else:
+                continued = False
 
-            for p in processes:
-                p.join()
+            if not arguments['multi_scene']:
 
-            with open('training-history/{}/arguments.json'.format(args.about), 'w') as outfile:
-                json.dump(vars(args), outfile)
+                if arguments['easy']:
+                    if continued:
+                        raise NotImplementedError
+                    else:
+                        f = h5py.File("{}.hdf5".format(os.path.join(config['dump_path'], training_scene)), 'r')
+                        all_visible_objects = set(",".join([o for o in list(f['visible_objects']) if o != '']).split(','))
+
+                        states = f['locations'][()]
+                        visible_objects = f['visible_objects'][()]
+                        single_target = {}
+                        single_target_to_save = {}
+                        for target in all_visible_objects:
+                            target_ids = [idx for idx in range(len(states)) if target in visible_objects[idx].split(",")]
+                            target_locs = set([tuple(states[idx][:2]) for idx in target_ids])
+                            single_target[target] = [list(target_locs)[np.random.randint(0, len(target_locs))]]    
+                            single_target_to_save[target] = str(list(target_locs)[np.random.randint(0, len(target_locs))])
+
+                        f.close()
+                        arguments.update(single_target_to_save)
+                else:
+                    single_target = single_target_to_save = None
+
+                if not os.path.isdir("training-history/{}".format(arguments['about'])):
+                    os.mkdir("training-history/{}".format(arguments['about']))
+
+                with open('training-history/{}/arguments.json'.format(arguments['about']), 'w') as outfile:
+                    json.dump(arguments, outfile)
+
+                print(list(zip(range(len(trainable_objects)), trainable_objects)))
+                command = input("Please specify target ids, you can choose either individually (e.g: 0,1,2) or by range (e.g: 0-4)\nYour input:")
+                if '-' not in command:
+                    target_ids = [int(i.strip()) for i in command.split(",")]
+                else:
+                    target_ids = list(range(int(command.split('-')[0]), int(command.split('-')[1]) + 1))
+
+                training_objects = [trainable_objects[target_id] for target_id in target_ids]
+                num_thread_each = arguments['num_processes'] // len(training_objects)
+                object_threads = []
+
+                for obj in training_objects:
+                    object_threads += [obj] * num_thread_each
+
+                object_threads += [np.random.choice(training_objects)] * (arguments['num_processes'] - len(object_threads))
+
+                print("Start training agent to find {} in {}".format(training_objects, training_scene))
+
+                shared_model = ActorCritic(config, arguments)
+                shared_model.share_memory()
+
+                scheduler = None
+                if arguments['no_shared']:
+                    optimizer = None
+                else:
+                    if arguments['optim'] == 0:
+                        optimizer = SharedAdam(shared_model.parameters(), lr=arguments['lr'])
+                    else:
+                        optimizer = SharedRMSprop(shared_model.parameters(), lr=arguments['lr'], alpha=0.99, eps=0.1)
+
+                    optimizer.share_memory()
+                    if arguments['lr_decay']:
+                        decay_step = (arguments['lr'] - 1e-6) / (arguments['num_epochs'] * arguments['num_processes'])
+                        lambda1 = lambda epoch: arguments['lr'] - epoch * decay_step
+                        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+
+                processes = []
+
+                counter = mp.Value('i', 0)
+                lock = mp.Lock()
+
+                for rank in range(0, arguments['num_processes']):
+                    p = mp.Process(target=train, args=(training_scene, object_threads[rank], single_target, rank, shared_model, \
+                                    scheduler, counter, lock, config, arguments, optimizer))
+                    p.start()
+                    processes.append(p)
+
+                for p in processes:
+                    p.join()
+
+            else:
+
+                print(list(zip(range(len(picked)), list(picked.keys()))))
+                command = input("Please specify scene ids:")
+                    
+                scene_ids = [int(i.strip()) for i in command.split(",")]
+                training_scenes = [list(picked.keys())[i] for i in scene_ids]
+                num_thread_each = arguments['num_processes'] // len(training_scenes)
+                scene_threads = []
+
+                for s in training_scenes:
+                    scene_threads += [s] * num_thread_each
+
+                scene_threads += [np.random.choice(training_scenes)] * (arguments['num_processes'] - len(scene_threads))
+
+                if not os.path.isdir("training-history/{}".format(arguments['about'])):
+                    os.mkdir("training-history/{}".format(arguments['about']))
+
+                with open('training-history/{}/arguments.json'.format(arguments['about']), 'w') as outfile:
+                    json.dump(arguments, outfile)
+
+                print("Start training agent in {}".format(training_scenes))
+
+                shared_model = ActorCritic(config, arguments)
+                shared_model.share_memory()
+
+                scheduler = None
+                if arguments['no_shared']:
+                    optimizer = None
+                else:
+                    if arguments['optim'] == 0:
+                        optimizer = SharedAdam(shared_model.parameters(), lr=arguments['lr'])
+                    else:
+                        optimizer = SharedRMSprop(shared_model.parameters(), lr=arguments['lr'], alpha=0.99, eps=0.1)
+
+                    optimizer.share_memory()
+                    if arguments['lr_decay']:
+                        decay_step = (arguments['lr'] - 1e-6) / (arguments['num_epochs'] * arguments['num_processes'])
+                        lambda1 = lambda epoch: arguments['lr'] - epoch * decay_step
+                        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
+
+                processes = []
+
+                counter = mp.Value('i', 0)
+                lock = mp.Lock()
+
+                for rank in range(0, arguments['num_processes']):
+                    p = mp.Process(target=train_multi, args=(scene_threads[rank], rank, shared_model, \
+                                    scheduler, counter, lock, config, arguments, optimizer))
+                    p.start()
+                    processes.append(p)
+
+                for p in processes:
+                    p.join()                
+
         else:
+            trainable_objects = config["picked"][training_scene]['train']
+            testing_objects = config["picked"][training_scene]['test']
+            all_visible_objects = trainable_objects + testing_objects
+            phase = ['train'] * len(trainable_objects) + ['test'] * len(testing_objects)
+
+            print(list(zip(range(len(all_visible_objects)), phase, all_visible_objects)))
+
+            command = input("Please specify target ids, you can choose either individually (e.g: 0,1,2) or by range (e.g: 0-4)\nYour input:")
+            if '-' not in command:
+                target_ids = [int(i.strip()) for i in command.split(",")]
+            else:
+                target_ids = list(range(int(command.split('-')[0]), int(command.split('-')[1]) + 1))
+
+            chosen_objects = [all_visible_objects[target_id] for target_id in target_ids]
+
             print("Start testing ..")
-            if args.weights is not None:
-                shared_model.load_state_dict(torch.load(args.weights))
+            if args.folder is not None:
+                weights, arguments = read_weights(args.folder)
+                shared_model = ActorCritic(config, arguments)
+                shared_model.share_memory()
+                
+                shared_model.load_state_dict(torch.load(weights))
                 print("loaded model")
             else:
+                print("*weights not found, testing random agent ..")
                 shared_model = None
 
-            results = mp.Array('f', len(training_objects))
-            for rank, obj in enumerate(training_objects):
+            results = mp.Array('f', len(chosen_objects))
+            processes = []
+            for rank, obj in enumerate(chosen_objects):
                 p = mp.Process(target=test, args=(training_scene, obj, rank, shared_model, \
-                                results, config, vars(args)))
+                                results, config, arguments))
                 p.start()
                 processes.append(p)
 
             for p in processes:
                 p.join()
 
-            print("Testing accuracies:", list(zip(training_objects, results[:])))
+            print("Testing accuracies:", list(zip(chosen_objects, results[:])))
         

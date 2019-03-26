@@ -25,24 +25,38 @@ class GCN(nn.Module):
         x = F.relu(self.gc3(x, adj))
         return x
 
-
 class ActorCritic(torch.nn.Module):    
 
-    def __init__(self, config, arguments):
+    def __init__(self, config, arguments, gpu_id=-1):
         super(ActorCritic, self).__init__()
 
         self.config = config
         self.arguments = arguments
-        self.dtype = torch.FloatTensor if not arguments['use_gpu'] else torch.cuda.FloatTensor
-        self.train_resnet = arguments['train_resnet']
+
+        if gpu_id != -1:
+            torch.cuda.set_device(gpu_id)
+            self.dtype = torch.cuda.FloatTensor
+        else:
+            self.dtype = torch.FloatTensor
+
+        self.use_lstm = arguments['lstm']
         self.history_size = arguments['history_size']
 
-        if self.train_resnet:
-            self.extractor = models.resnet50(pretrained=True)
-            modules = list(self.extractor.children())[:-1]
-            self.extractor = nn.Sequential(*modules)
+        self.input_size = 2048
 
-        self.visual_ft = nn.Linear(in_features=2048 * self.history_size, out_features=512)
+        if arguments['onehot']:
+            self.input_size = 1000
+
+        if arguments['pca']:
+            self.input_size = 3
+
+        if self.use_lstm:
+            self.visual_ft = nn.LSTM(self.input_size, 512)
+            self.hidden = (torch.zeros(1, 1, 512).type(self.dtype), torch.zeros(1, 1, 512).type(self.dtype))
+        else:
+            self.visual_ft = nn.Linear(in_features=self.input_size * self.history_size, out_features=512)
+            if not arguments['onehot']:
+                self.dropout = nn.Dropout(self.arguments['dropout'])
 
         if arguments["embed"] == 0: 
             self.embeddings = pickle.load(open(config["embeddings_onehot"], 'rb'))
@@ -82,9 +96,16 @@ class ActorCritic(torch.nn.Module):
         assert len(inputs) == self.history_size
         inputs = [torch.from_numpy(inp).type(self.dtype) for inp in inputs]    
 
-        joint_features = torch.cat(inputs)
-        joint_features = joint_features.view(1, -1)
-        visual = F.relu(self.visual_ft(joint_features))
+        if not self.use_lstm:
+            joint_features = torch.cat(inputs)
+            joint_features = joint_features.view(1, -1)
+            if not self.arguments['onehot']:
+                joint_features = self.dropout(joint_features)
+            visual = F.relu(self.visual_ft(joint_features))
+        else:
+            joint_features = torch.cat(inputs).view(len(inputs), 1, -1)
+            out, h = self.visual_ft(joint_features, self.hidden)
+            visual = h[0].view(1, -1)
         
         embeded = torch.from_numpy(self.embeddings[word]).type(self.dtype)
         embeded = embeded.view(1, embeded.size(0))
@@ -114,3 +135,6 @@ class ActorCritic(torch.nn.Module):
         x = F.relu(x)
         
         return self.critic_linear(x), self.actor_linear(x)
+
+    def reset_lstm(self):
+        self.hidden = (torch.zeros(1, 1, 512).type(self.dtype), torch.zeros(1, 1, 512).type(self.dtype))

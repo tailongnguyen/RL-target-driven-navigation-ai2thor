@@ -24,7 +24,7 @@ from model import ActorCritic
 def test(testing_scene, test_object, rank, shared_model, results, config, arguments=dict()):
     torch.manual_seed(arguments['seed'] + rank)
 
-    env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments)
+    env = AI2ThorDumpEnv(testing_scene, test_object, None, config, arguments)
 
     model = shared_model
     if model is not None:
@@ -42,7 +42,7 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
     actions = deque(maxlen=100)
     results[rank] = 0
 
-    for ep in range(arguments['num_epochs']):
+    for ep in range(1000):
         for step in range(arguments['num_iters']):
             if model is not None:
                 with torch.no_grad():
@@ -71,22 +71,27 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
 
         # print('[P-{}] ep {}/{}: {}'.format(rank, ep+1, arguments['num_epochs'], 'fail' if not done else 'success'))
 
-    results[rank] = results[rank] / arguments['num_epochs']
+    results[rank] = results[rank] / 1000
 
-def live_test(testing_scene, test_object, shared_model, config, arguments=dict()):
-    env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments)
+def live_test(testing_scene, test_objects, shared_model, config, arguments=dict()):
 
     model = shared_model
     if model is not None:
-        if arguments['use_gpu']:
-            model.cuda()
-
         model.eval()
 
     # a quick hack to prevent the agent from stucking
     actions = deque(maxlen=100)
+    test_object = np.random.choice(test_objects)
+    env = AI2ThorDumpEnv(testing_scene, test_object, None, config, arguments)
 
+    new_test_object = None
     while 1:
+        if new_test_object is not None and new_test_object != test_object:
+            print("Finding {} ..".format(new_test_object))
+            env = AI2ThorDumpEnv(testing_scene, new_test_object, None, config, arguments)
+        else:
+            print("Finding {} ..".format(test_object))
+
         state, score, target = env.reset()
         start = env.current_state_id
         done = True
@@ -99,6 +104,7 @@ def live_test(testing_scene, test_object, shared_model, config, arguments=dict()
             time.sleep(0.3)
             k = cv2.waitKey(33) 
             if k == ord('r'): # press q to escape
+                new_test_object = np.random.choice(test_objects)
                 break
             elif k == ord('q'): # press q to escape
                 sys.exit("End live test.")
@@ -108,8 +114,8 @@ def live_test(testing_scene, test_object, shared_model, config, arguments=dict()
                 with torch.no_grad():
                     value, logit = model(state, score, target)
                 prob = F.softmax(logit, dim=-1)
-                # action = prob.max(1, keepdim=True)[1].numpy()[0, 0]
-                action = prob.multinomial(num_samples=1).detach().numpy()[0, 0]
+                action = prob.max(1, keepdim=True)[1].numpy()[0, 0]
+                # action = prob.multinomial(num_samples=1).detach().numpy()[0, 0]
 
             else:
                 action = np.random.choice(range(arguments['action_size']))
@@ -124,9 +130,11 @@ def live_test(testing_scene, test_object, shared_model, config, arguments=dict()
             if actions.count(actions[0]) == actions.maxlen:
                 # print('In test. Episode over because agent repeated action {} times'.format(
                                                                                     # actions.maxlen))
+                new_test_object = np.random.choice(test_objects)
                 break
 
             if done:                
+                new_test_object = np.random.choice(test_objects)
                 break
 
         if not done:

@@ -17,6 +17,43 @@ ALL_POSSIBLE_ACTIONS = [
     'MoveLeft',
 ]
 
+def check_size(scene):
+    f = h5py.File("dumped/{}.hdf5".format(scene), "w")
+
+    locations = []
+    visible_objects = []
+
+    controller = ai2thor.controller.Controller()
+    controller.start()
+
+    controller.reset(scene)
+    controller.random_initialize(unique_object_types=True)
+    event = controller.step(dict(action='Initialize', gridSize=0.5))
+    y_coord = event.metadata['agent']['position']['y']
+
+    locations.append((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
+
+    # Using BFS to discover all reachable positions in current environment.
+
+    visited = set()
+    visited.add((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
+
+    while len(locations) > 0:
+        loc = locations.pop(0)
+        for act in ALL_POSSIBLE_ACTIONS:    
+            controller.step(dict(action='Teleport', x=loc[0], y=y_coord, z=loc[1]))
+            event = controller.step(dict(action=act))
+
+            if event.metadata['lastActionSuccess']:
+                new_loc = (event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z'])
+                if new_loc not in visited:
+                    visited.add(new_loc)
+                    locations.append(new_loc)
+
+    all_locs = list(visited)
+    controller.stop()
+    return len(all_locs)
+
 def cal_min_dist(index, all_locs, loc2idx):
     '''
     Calculate min distances from one particular position (index) to all other positions in environment 
@@ -234,32 +271,47 @@ def dump_resnet(tmp, extractor, normalize, scene="FloorPlan28"):
     f.close()
 
 if __name__ == '__main__':
-    config = json.load(open("pytorch_a3c/config.json"))
-    kitchen_scenes = config['rooms']['Kitchens']['scenes']
+    config = json.load(open("config.json"))
+    scenes = {'FloorPlan1': 41, 'FloorPlan2': 34, 'FloorPlan3': 1, 'FloorPlan4': 12, 'FloorPlan5': 25, 'FloorPlan6': 7, 'FloorPlan7': 91, 'FloorPlan8': 48, 'FloorPlan9': 19, 'FloorPlan10': 61, 'FloorPlan11': 19, 'FloorPlan12': 23, 'FloorPlan13': 50, 'FloorPlan14': 29, 'FloorPlan15': 18, 'FloorPlan16': 45, 'FloorPlan17': 25, 'FloorPlan18': 62, 'FloorPlan19': 19, 'FloorPlan20': 24, 'FloorPlan21': 14, 'FloorPlan22': 38, 'FloorPlan23': 14, 'FloorPlan24': 20, 'FloorPlan25': 11, 'FloorPlan26': 11, 'FloorPlan27': 6, 'FloorPlan28': 23, 'FloorPlan29': 23, 'FloorPlan30': 21, 'FloorPlan201': 58, 'FloorPlan202': 35, 'FloorPlan203': 150, 'FloorPlan204': 36, 'FloorPlan205': 60, 'FloorPlan206': 23, 'FloorPlan207': 45, 'FloorPlan208': 67, 'FloorPlan209': 100, 'FloorPlan210': 65, 'FloorPlan211': 33, 'FloorPlan212': 26, 'FloorPlan213': 64, 'FloorPlan214': 46, 'FloorPlan215': 108, 'FloorPlan216': 32, 'FloorPlan217': 36, 'FloorPlan218': 42, 'FloorPlan219': 47, 'FloorPlan220': 63, 'FloorPlan221': 28, 'FloorPlan222': 19, 'FloorPlan223': 56, 'FloorPlan224': 81, 'FloorPlan225': 1, 'FloorPlan226': 10, 'FloorPlan227': 61, 'FloorPlan228': 16, 'FloorPlan229': 54, 'FloorPlan230': 108, 'FloorPlan301': 36, 'FloorPlan302': 26, 'FloorPlan303': 20, 'FloorPlan304': 29, 'FloorPlan305': 19, 'FloorPlan306': 22, 'FloorPlan307': 23, 'FloorPlan308': 30, 'FloorPlan309': 67, 'FloorPlan310': 20, 'FloorPlan311': 62, 'FloorPlan312': 20, 'FloorPlan313': 27, 'FloorPlan314': 23, 'FloorPlan315': 24, 'FloorPlan316': 29, 'FloorPlan317': 39, 'FloorPlan318': 22, 'FloorPlan319': 27, 'FloorPlan320': 15, 'FloorPlan321': 37, 'FloorPlan322': 19, 'FloorPlan323': 44, 'FloorPlan324': 51, 'FloorPlan325': 69, 'FloorPlan326': 10, 'FloorPlan327': 28, 'FloorPlan328': 20, 'FloorPlan329': 27, 'FloorPlan330': 64, 'FloorPlan401': 27, 'FloorPlan402': 22, 'FloorPlan403': 21, 'FloorPlan404': 14, 'FloorPlan405': 10, 'FloorPlan406': 27, 'FloorPlan407': 12, 'FloorPlan408': 1, 'FloorPlan409': 10, 'FloorPlan410': 20, 'FloorPlan411': 8, 'FloorPlan412': 7, 'FloorPlan413': 18, 'FloorPlan414': 14, 'FloorPlan415': 14, 'FloorPlan416': 23, 'FloorPlan417': 15, 'FloorPlan418': 18, 'FloorPlan419': 2, 'FloorPlan420': 2, 'FloorPlan421': 8, 'FloorPlan422': 9, 'FloorPlan423': 12, 'FloorPlan424': 6, 'FloorPlan425': 7, 'FloorPlan426': 10, 'FloorPlan427': 12, 'FloorPlan428': 17, 'FloorPlan429': 13, 'FloorPlan430': 28}
+    
+    # scene_size = {}
+    # for room in config['rooms'].keys():
+    #     # train_objects = config['rooms'][room]['train_objects']
+    #     # test_objects = config['rooms'][room]['test_objects']
+    #     for scene in config['rooms'][room]['scenes']:
+    #         scene_size[scene] = check_size(scene)
 
-    # for scene in kitchen_scenes[:1]:
-    #   print("Dumping {}".format(scene))
-    #   # dump(scene, config['resolution'])
-    #   dump_resnet(scene)
+    # print(scene_size)
+
+
 
     tmp = models.resnet50(pretrained=True)
+    tmp.eval()
     tmp.cuda()
     # tmp = models.inception_v3(pretrained=True)
     modules = list(tmp.children())[:-1]
     extractor = nn.Sequential(*modules)
-    # extractor.cuda()
+    extractor.eval()
 
-    # tmp.cuda()
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
-    for scene in [   'FloorPlan11']:
-                     # "FloorPlan2",
-                     # "FloorPlan28",
-                     # "FloorPlan202",
-                     # "FloorPlan203",
-                     # "FloorPlan204",
-                     # "FloorPlan303"]:
-        # scene = "FloorPlan{}".format(i)
+    for scene in [   'FloorPlan1',
+                     "FloorPlan2",
+                     "FloorPlan10",
+                     "FloorPlan28",
+                     "FloorPlan201",
+                     "FloorPlan202",
+                     "FloorPlan204",
+                     "FloorPlan206",
+                     "FloorPlan301",
+                     "FloorPlan302",
+                     "FloorPlan309",
+                     "FloorPlan311",
+                     "FloorPlan401",
+                     "FloorPlan402",
+                     "FloorPlan406",
+                     "FloorPlan430"]:
+
         dump(scene, config['resolution'])
         dump_resnet(tmp, extractor, normalize, scene)

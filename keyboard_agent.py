@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import h5py
 import click
+import json
 import pyglet
 
 from PIL import Image
@@ -46,15 +47,16 @@ class SimpleImageViewer(object):
   def __del__(self):
     self.close()
 
-def run():
+def run(file_name=None):
+	# file_name = file_path.split('/')[-1].split('.')[0]
 	controller = ai2thor.controller.Controller()
 	controller.start()
 
-	controller.reset("FloorPlan21")
-	controller.random_initialize(unique_object_types=True)
-	event = controller.step(dict(action='Initialize', gridSize=0.25, visibilityDistance=1.0))
-	print(list(np.unique([obj['objectType'] for obj in event.metadata['objects']])))
-	locs = set()
+	controller.reset("FloorPlan1")
+	event = controller.step(dict(action='Initialize', gridSize=0.5))
+	y_coord = event.metadata['agent']['position']['y']
+	all_visible_objects = list(np.unique([obj['objectType'] for obj in event.metadata['objects']]))
+	print(y_coord)
 	while True:  # making a loop
 		try:  # used try so that if user pressed other than the given key error will not be shown
 			key = click.getchar()
@@ -74,15 +76,14 @@ def run():
 				controller.stop()
 				break
 			elif key =='r':
-				controller.reset('FloorPlan28')
+				scene = input("Scene id: ")
+				controller.reset('FloorPlan{}'.format(scene))
 				controller.random_initialize(unique_object_types=True)
 				event = controller.step(dict(action='Initialize', gridSize=0.5))
 			else:
 				print("Key not supported! Try a, d, w, s, q, r.")
-
-			print(event.metadata['agent']['position'], event.metadata['agent']['rotation'], event.metadata['agent']['cameraHorizon'])
-			print(list(np.unique([obj['objectType'] for obj in event.metadata['objects'] if obj['visible']])))
-			locs.add((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
+			print((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z'], event.metadata['agent']['rotation']))
+			print([(obj['objectType'], obj['distance']) for obj in event.metadata['objects'] if obj['visible']])
 		except:
 			print("Key not supported! Try a, d, w, s, q, r.")
 
@@ -118,10 +119,14 @@ if __name__ == '__main__':
 	next_position = None
 	visible = None
 
-	f = h5py.File('dumped/FloorPlan2.hdf5', "r")
+	f = h5py.File('dumped/FloorPlan10.hdf5', "r")
 	observations = f['observations']
 	graph = f['graph']
 	visible_objects = f['visible_objects']
+	dump_features = f['dump_features']
+
+	config = json.load(open('config.json'))
+	categories = list(config['new_objects'].keys())
 
 	current_position = np.random.randint(0, observations.shape[0])
 
@@ -139,7 +144,9 @@ if __name__ == '__main__':
 			# move actions
 			next_position = graph[current_position][human_agent_action]
 			current_position = next_position if next_position != -1 else current_position
-			visible = visible_objects[next_position].split(",") if next_position != -1 else None
+			print(dump_features[current_position][-4:])
+			distances = [(categories[i], dump_features[current_position][i]) for i in list(np.where(dump_features[current_position][:-4] > 0)[0])]
+			visible = visible_objects[current_position].split(',')
 			human_agent_action = None
 
 		# waiting for reset command

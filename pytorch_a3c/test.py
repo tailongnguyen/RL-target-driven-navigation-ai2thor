@@ -18,18 +18,29 @@ import cv2
 
 sys.path.append('..') # to access env package
 
-from env.ai2thor_env import AI2ThorDumpEnv
+from env.ai2thor_env import AI2ThorDumpEnv, MultiSceneEnv
 from model import ActorCritic
 
 def test(testing_scene, test_object, rank, shared_model, results, config, arguments=dict()):
     torch.manual_seed(arguments['seed'] + rank)
 
-    env = AI2ThorDumpEnv(testing_scene, test_object, None, config, arguments)
+    env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments, arguments['seed'] + rank)
+    print("Finding {} in {}, {}".format(test_object, testing_scene, env.target_locs))
 
-    model = shared_model
-    if model is not None:
-        if arguments['use_gpu']:
-            model.cuda()
+    if shared_model is not None:
+        gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
+        # gpu_id = -1
+
+        model = ActorCritic(config, arguments, gpu_id)
+        if gpu_id >= 0:
+            with torch.cuda.device(gpu_id):
+                model = model.cuda()
+                model.load_state_dict(shared_model.state_dict())
+
+                print("[P{}] loaded model into cuda {}".format(rank, gpu_id))
+        else:
+            model.load_state_dict(shared_model.state_dict())
+            print("[P{}] loaded model".format(rank))
 
         model.eval()
 
@@ -48,8 +59,8 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
                 with torch.no_grad():
                     value, logit = model(state, score, target)
                 prob = F.softmax(logit, dim=-1)
-                # action = prob.max(1, keepdim=True)[1].numpy()
-                action = prob.multinomial(num_samples=1).detach().numpy()[0, 0]
+                action = prob.max(1, keepdim=True)[1].cpu().numpy()
+                # action = prob.multinomial(num_samples=1).detach().cpu().numpy()[0, 0]
 
             else:
                 action = np.random.choice(range(arguments['action_size']))
@@ -73,6 +84,62 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
 
     results[rank] = results[rank] / 1000
 
+def test_multi(testing_scene, rank, shared_model, results, config, arguments=dict()):
+    torch.manual_seed(arguments['seed'] + rank)
+
+    env = MultiSceneEnv(testing_scene, config, arguments, arguments['seed'] + rank)
+
+    if shared_model is not None:
+        gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
+        # gpu_id = -1
+
+        model = ActorCritic(config, arguments, gpu_id)
+        if gpu_id >= 0:
+            with torch.cuda.device(gpu_id):
+                model = model.cuda()
+                model.load_state_dict(shared_model.state_dict())
+
+                # print("[P{}] loaded model into cuda {}".format(rank, gpu_id))
+        else:
+            model.load_state_dict(shared_model.state_dict())
+            # print("[P{}] loaded model".format(rank))
+
+        model.eval()
+
+    state, score, target = env.reset()
+    starting = env.current_state_id
+    done = True
+
+    start_time = time.time()
+
+    for ep in range(1000):
+        state, score, target = env.reset()
+        for step in range(arguments['num_iters']):
+            if model is not None:
+                with torch.no_grad():
+                    value, logit = model(state, score, target)
+                prob = F.softmax(logit, dim=-1)
+                action = prob.max(1, keepdim=True)[1].cpu().numpy()
+                # action = prob.multinomial(num_samples=1).detach().cpu().numpy()[0, 0]
+
+            else:
+                action = np.random.choice(range(arguments['action_size']))
+
+            state, score, reward, done = env.step(action)
+            ending = env.current_state_id
+            
+            if done:                
+                break
+
+        if not done:
+            tm = results[target]
+            tm.append(0)
+            results[target] = tm
+        else:
+            tm = results[target]
+            tm.append(env.shortest[ending, starting] / max(step + 1, env.shortest[ending, starting]))
+            results[target] = tm
+
 def live_test(testing_scene, test_objects, shared_model, config, arguments=dict()):
 
     model = shared_model
@@ -82,13 +149,13 @@ def live_test(testing_scene, test_objects, shared_model, config, arguments=dict(
     # a quick hack to prevent the agent from stucking
     actions = deque(maxlen=100)
     test_object = np.random.choice(test_objects)
-    env = AI2ThorDumpEnv(testing_scene, test_object, None, config, arguments)
+    env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments)
 
     new_test_object = None
     while 1:
         if new_test_object is not None and new_test_object != test_object:
             print("Finding {} ..".format(new_test_object))
-            env = AI2ThorDumpEnv(testing_scene, new_test_object, None, config, arguments)
+            env = AI2ThorDumpEnv(testing_scene, new_test_object, config, arguments)
         else:
             print("Finding {} ..".format(test_object))
 

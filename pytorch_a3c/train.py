@@ -40,10 +40,10 @@ def ensure_shared_grads(model, shared_model, gpu=False):
         else:
             shared_param._grad = param.grad.cpu()
 
-def train(training_scene, train_object, single_target, rank, shared_model, scheduler, counter, lock, config, arguments=dict(), optimizer=None):
+def train(training_scene, train_object, rank, shared_model, scheduler, counter, lock, config, arguments=dict(), optimizer=None):
     torch.manual_seed(arguments['seed'] + rank)
     # To prevent out of memory
-    if (arguments['lstm'] and rank < 8) or (arguments['use_gcn'] and rank < 10):
+    if (arguments['lstm'] and rank < 8):
         arguments.update({"gpu_ids": [-1]})
 
     gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
@@ -53,12 +53,8 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
 
     if optimizer is None:
         optimizer = optim.RMSprop(shared_model.parameters(), lr=arguments['lr'],  alpha=0.99, eps=0.1)
-        # optimizer = optim.Adam(shared_model.parameters(), lr=arguments['lr'])
 
-    if arguments['easy']:
-        env = AI2ThorDumpEnv(training_scene, train_object, single_target[train_object], config, arguments)
-    else:
-        env = AI2ThorDumpEnv(training_scene, train_object, None, config, arguments)
+    env = AI2ThorDumpEnv(training_scene, train_object, config, arguments, seed=arguments['seed'] + rank)
     
     state, score, target = env.reset()
     starting = env.current_state_id
@@ -69,6 +65,9 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
     if gpu_id >= 0:
         with torch.cuda.device(gpu_id):
             model = model.cuda()
+            dtype = torch.cuda.FloatTensor 
+    else:
+        dtype = torch.FloatTensor
 
     model.train()
 
@@ -77,10 +76,12 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
     redundancies = []
     success = []
     avg_entropies = []
+    learning_rates = []
 
     start = time.time()
 
     episode_length = 0
+
     for epoch in range(arguments['num_epochs']):
         # Sync with the shared model
         if gpu_id >= 0:
@@ -89,8 +90,17 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
         else:
             model.load_state_dict(shared_model.state_dict())
 
+        if arguments['lstm']:
+            if done:
+                cx = torch.zeros(1, 512).type(dtype)
+                hx = torch.zeros(1, 512).type(dtype)
+            else:
+                cx = cx.detach()
+                hx = hx.detach()
+
         if scheduler is not None:
             scheduler.step()
+            learning_rates.append(optimizer.param_groups[0]['lr'])
         
         values = []
         log_probs = []
@@ -99,8 +109,11 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
 
         for step in range(arguments['num_iters']):
             episode_length += 1
+            if arguments['lstm']:
+                value, logit, (hx, cx) = model((state, (hx, cx)), score, target)
+            else:
+                value, logit = model(state, score, target)
 
-            value, logit = model(state, score, target)
             prob = F.softmax(logit, dim=-1)
             log_prob = F.log_softmax(logit, dim=-1)
             entropy = -(log_prob * prob).sum(1, keepdim=True)
@@ -129,8 +142,6 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
             ending = env.current_state_id
             if done:
                 state, score, target = env.reset()
-                if arguments['lstm']:
-                    model.reset_lstm()
                     
                 print('[P-{}] Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
                         .format(rank, episode_length, sum(rewards), (time.time() - start) / 3600))
@@ -150,7 +161,11 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
         # Backprop and optimisation
         R = torch.zeros(1, 1)
         if not done:  # to change last reward to predicted value to ....
-            value, _, = model(state, score, target)
+            if arguments['lstm']:
+                value, _, (hx, cx) = model((state, (hx, cx)), score, target)
+            else:
+                value, _ = model(state, score, target)
+
             R = value.detach()
         
         if gpu_id >= 0:
@@ -168,10 +183,8 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
                 gae = gae.cuda()
 
         for i in reversed(range(len(rewards))):
-            if arguments['norm_reward']:
-                R = arguments['gamma'] * R + rewards[i] * arguments['num_iters'] / (step + 1)
-            else:
-                R = arguments['gamma'] * R + rewards[i]
+            
+            R = arguments['gamma'] * R + rewards[i]
 
             advantage = R - values[i]
             value_loss = value_loss + 0.5 * advantage.pow(2)
@@ -195,60 +208,100 @@ def train(training_scene, train_object, single_target, rank, shared_model, sched
         ensure_shared_grads(model, shared_model, gpu=gpu_id >= 0)
         optimizer.step()
 
-        if (epoch + 1) % 1000 == 0:
+        if epoch > 1000 and np.mean(success[-500:]) >= 0.9 and \
+            not os.path.isfile("training-history/{}/net_good.pth".format(arguments['about'])):
+            torch.save(model.state_dict(), "training-history/{}/net_good.pth".format(arguments['about']))
+
+        if (epoch + 1) % 2000 == 0:
             with open('training-history/{}/{}_{}_{}.pkl'.format(arguments['about'], training_scene, train_object, rank), 'wb') as f:
                 pickle.dump({"rewards": total_reward_for_num_steps_list, 
                             "success_rate": success, 'redundancies': redundancies,
-                            "entropies": avg_entropies}, f, pickle.HIGHEST_PROTOCOL)
+                            "entropies": avg_entropies, 'lrs': learning_rates}, f, pickle.HIGHEST_PROTOCOL)
 
-            torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
-
-    with lock:
-        print("Done in steps {}th".format(counter.value))
+    torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], train_object))
 
 def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, config, arguments=dict(), optimizer=None):
     torch.manual_seed(arguments['seed'] + rank)
 
-    env = MultiSceneEnv(training_scene, config, arguments)
-    
-    model = ActorCritic(config, arguments)
+    # To prevent out of memory
+    if (arguments['lstm'] and rank < 8):
+        arguments.update({"gpu_ids": [-1]})
+
+    gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
+
+    if gpu_id >= 0:
+        torch.cuda.manual_seed(arguments['seed'] + rank)
 
     if optimizer is None:
-        optimizer = optim.RMSprop(shared_model.parameters(), lr=arguments['lr'], alpha=0.99, eps=0.1)
-        # optimizer = optim.Adam(shared_model.parameters(), lr=arguments['lr'])
+        optimizer = optim.RMSprop(shared_model.parameters(), lr=arguments['lr'],  alpha=0.99, eps=0.1)
 
-    model.train()
-
+    env = MultiSceneEnv(training_scene, config, arguments, seed=arguments['seed'] + rank)
+    
     state, score, new_target = env.reset()
     starting = env.current_state_id
     done = True
-    print("Done resetting. Now find {} in {}!".format(env.target, env.scene))
+    print("Done initalizing process {}. Now find {} in {}! Use gpu: {}".format(rank, env.target, env.scene, 'yes' if gpu_id >= 0 else 'no'))
+
+    model = ActorCritic(config, arguments, gpu_id)
+    if gpu_id >= 0:
+        with torch.cuda.device(gpu_id):
+            model = model.cuda()
+            dtype = torch.cuda.FloatTensor 
+    else:
+        dtype = torch.FloatTensor
+
+    model.train()
 
     # monitoring
-    total_reward_for_num_steps_list = {}
+    total_reward_for_num_steps_list = []
     redundancies = []
-    avg_entropies = []
     success = []
+    avg_entropies = []
+    learning_rates = []
+    random_tagets = {}
 
     start = time.time()
 
     episode_length = 0
+
     for epoch in range(arguments['num_epochs']):
+        target = new_target
+        if target not in random_tagets:
+            random_tagets[target] = 1
+        else:
+            random_tagets[target] += 1
+
         # Sync with the shared model
-        model.load_state_dict(shared_model.state_dict())
+        if gpu_id >= 0:
+            with torch.cuda.device(gpu_id):
+                model.load_state_dict(shared_model.state_dict())
+        else:
+            model.load_state_dict(shared_model.state_dict())
+
+        if arguments['lstm']:
+            if done:
+                cx = torch.zeros(1, 512).type(dtype)
+                hx = torch.zeros(1, 512).type(dtype)
+            else:
+                cx = cx.detach()
+                hx = hx.detach()
+
         if scheduler is not None:
             scheduler.step()
+            learning_rates.append(optimizer.param_groups[0]['lr'])
         
         values = []
         log_probs = []
         rewards = []
         entropies = []
 
-        target = new_target
         for step in range(arguments['num_iters']):
             episode_length += 1
+            if arguments['lstm']:
+                value, logit, (hx, cx) = model((state, (hx, cx)), score, target)
+            else:
+                value, logit = model(state, score, target)
 
-            value, logit = model(state, score, target)
             prob = F.softmax(logit, dim=-1)
             log_prob = F.log_softmax(logit, dim=-1)
             entropy = -(log_prob * prob).sum(1, keepdim=True)
@@ -275,9 +328,9 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
             rewards.append(reward)
 
             ending = env.current_state_id
-
             if done:
                 state, score, new_target = env.reset()
+                    
                 print('[P-{}] Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
                         .format(rank, episode_length, sum(rewards), (time.time() - start) / 3600))
 
@@ -289,32 +342,37 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
 
         # No interaction with environment below.
         # Monitoring
-        try:
-            total_reward_for_num_steps_list[target].append(sum(rewards))
-        except KeyError:
-            total_reward_for_num_steps_list[target] = [sum(rewards)]
-
+        total_reward_for_num_steps_list.append(sum(rewards))
         redundancies.append(step + 1 - env.shortest[ending, starting])
         avg_entropies.append(torch.tensor(entropies).numpy().mean())
 
         # Backprop and optimisation
         R = torch.zeros(1, 1)
         if not done:  # to change last reward to predicted value to ....
-            value, _, = model(state, score, target)
+            if arguments['lstm']:
+                value, _, (hx, cx) = model((state, (hx, cx)), score, target)
+            else:
+                value, _ = model(state, score, target)
+
             R = value.detach()
-    
+        
+        if gpu_id >= 0:
+            with torch.cuda.device(gpu_id):
+                R = R.cuda()
+
         values.append(R)
 
         policy_loss = 0
         value_loss = 0
-        # import pdb;pdb.set_trace() # good place to breakpoint to see training cycle
+
         gae = torch.zeros(1, 1)
+        if gpu_id >= 0:
+            with torch.cuda.device(gpu_id):
+                gae = gae.cuda()
 
         for i in reversed(range(len(rewards))):
-            if arguments['norm_reward']:
-                R = arguments['gamma'] * R + rewards[i] * arguments['num_iters'] / (step + 1)
-            else:
-                R = arguments['gamma'] * R + rewards[i]
+            
+            R = arguments['gamma'] * R + rewards[i]
 
             advantage = R - values[i]
             value_loss = value_loss + 0.5 * advantage.pow(2)
@@ -335,17 +393,18 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
         (policy_loss + arguments['vc'] * value_loss).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), arguments['max_grad_norm'])
 
-        ensure_shared_grads(model, shared_model)
+        ensure_shared_grads(model, shared_model, gpu=gpu_id >= 0)
         optimizer.step()
 
-        if (epoch + 1) % 1000 == 0:
+        if epoch > 1000 and np.mean(success[-500:]) >= 0.9 and \
+            not os.path.isfile("training-history/{}/net_good.pth".format(arguments['about'])):
+            torch.save(model.state_dict(), "training-history/{}/net_good.pth".format(arguments['about']))
+
+        if (epoch + 1) % 2000 == 0:
             with open('training-history/{}/{}_{}.pkl'.format(arguments['about'], training_scene, rank), 'wb') as f:
-                pickle.dump({"rewards": total_reward_for_num_steps_list, 
+                pickle.dump({"rewards": total_reward_for_num_steps_list, 'random_targets': random_tagets,
                             "success_rate": success, 'redundancies': redundancies,
-                            "entropies": avg_entropies}, f, pickle.HIGHEST_PROTOCOL)
+                            "entropies": avg_entropies, 'lrs': learning_rates}, f, pickle.HIGHEST_PROTOCOL)
 
-            torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], training_scene))
-
-    with lock:
-        print("Done in steps {}th".format(counter.value))
+    torch.save(model.state_dict(), "training-history/{}/net_{}.pth".format(arguments['about'], training_scene))
     

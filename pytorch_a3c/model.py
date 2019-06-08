@@ -45,13 +45,10 @@ class ActorCritic(torch.nn.Module):
 
         self.history_size = arguments['history_size']
 
-        self.input_size = 2048 + 109
+        self.input_size = 2048
 
         if arguments['onehot']:
             self.input_size = 109
-
-        if arguments['pca']:
-            self.input_size = 3
         
         if arguments['train_cnn']:
             self.conv1 = nn.Conv2d(3, 32, 3, stride=2, padding=1)
@@ -63,11 +60,9 @@ class ActorCritic(torch.nn.Module):
 
         if self.use_lstm:
             assert arguments['history_size'] == 1, "History size should be 1 if you want to use lstm."
-            self.visual_ft = nn.LSTMCell(input_size=self.input_size, hidden_size=512)
+            self.visual_ft = nn.LSTMCell(input_size=self.input_size, hidden_size=256)
         else:
             self.visual_ft = nn.Linear(in_features=self.input_size * self.history_size, out_features=512)
-            if not arguments['onehot']:
-                self.dropout = nn.Dropout(self.arguments['dropout'])
 
         if arguments["embed"] == 0: 
             self.embeddings = pickle.load(open(config["embeddings_onehot"], 'rb'))
@@ -77,6 +72,12 @@ class ActorCritic(torch.nn.Module):
         self.semantic_size = list(self.embeddings.values())[0].shape[0]
         self.semantic_ft = nn.Linear(in_features=self.semantic_size, out_features=512)
 
+        self.categories = list(config['new_objects'].keys())
+        self.cate2idx = config['new_objects']
+        self.num_objects = len(self.categories)
+        
+        self.all_embeddings = torch.stack([torch.from_numpy(self.embeddings[w]) for w in self.categories], 0).type(self.dtype)
+        
         if arguments['use_gcn']:
             self.categories = list(config['new_objects'].keys())
             self.num_objects = len(self.categories)
@@ -85,9 +86,20 @@ class ActorCritic(torch.nn.Module):
             self.adj = normalize(np.load(self.config['adj_file']))
             self.adj = torch.from_numpy(self.adj).type(self.dtype)
 
-            self.score_to_512 = nn.Linear(in_features=1000 if self.arguments['resnet_score'] else self.num_objects, out_features=512)
-            self.gcn = GCN(nfeat=1024, nhid=1024, nclass=1, dropout=0.5)
+            if not arguments['yolo_gcn']:
+                self.score_to_512 = nn.Linear(in_features=1000, out_features=512)
+                self.gcn = GCN(nfeat=1024, nhid=1024, nclass=1, dropout=0.5)
+            else:
+                self.gcn = GCN(nfeat=self.num_objects + 512, nhid=self.num_objects + 512, nclass=1, dropout=0.5)
+
             self.gcn_to_512 = nn.Linear(in_features=self.num_objects, out_features=512)
+
+        elif arguments['use_graph']:
+            self.adj = np.load(self.config['adj_file'])
+            self.adj = torch.from_numpy(self.adj).type(self.dtype)
+
+            self.graph_ft = nn.Linear(in_features=self.num_objects, out_features=self.num_objects)
+            fused_size = 512 * 2 + self.num_objects
         else:
             fused_size = 512 * 2
 
@@ -95,13 +107,28 @@ class ActorCritic(torch.nn.Module):
         self.critic_linear = nn.Linear(512, 1)
         self.actor_linear = nn.Linear(512, arguments['action_size'])
 
-        self.apply(weights_init)
+        self.apply(kaiming_weights_init)
         self.actor_linear.weight.data = normalized_columns_initializer(
                                             self.actor_linear.weight.data, 0.01)
         self.actor_linear.bias.data.fill_(0)
         self.critic_linear.weight.data = normalized_columns_initializer(
                                             self.critic_linear.weight.data, 1.0)
         self.critic_linear.bias.data.fill_(0)
+
+    def learned_embedding(self, word):
+        embeded = torch.from_numpy(self.embeddings[word]).type(self.dtype)
+        embeded = embeded.view(1, embeded.size(0))
+        semantic = F.relu(self.semantic_ft(embeded))
+
+        # if self.arguments['use_graph']:
+        #     relations = self.adj[self.cate2idx[word]]
+        #     r = F.relu(self.graph_ft(relations))
+        #     r = r.view(1, r.numel())
+        #     joint_embeddings = torch.cat((semantic, r), 1)
+        #     return joint_embeddings
+
+        return semantic
+
 
     def forward(self, inputs, scores, word):
         if self.arguments['lstm']:
@@ -119,16 +146,14 @@ class ActorCritic(torch.nn.Module):
             visual = F.relu(self.visual_ft(feature))
 
         else:
-            inputs = [torch.from_numpy(inp).type(self.dtype) for inp in inputs]    
+            torch_inputs = [torch.from_numpy(inp).type(self.dtype) for inp in inputs]    
 
             if not self.use_lstm:
-                joint_features = torch.cat(inputs)
+                joint_features = torch.cat(torch_inputs)
                 joint_features = joint_features.view(1, -1)
-                if not self.arguments['onehot']:
-                    joint_features = self.dropout(joint_features)
                 visual = F.relu(self.visual_ft(joint_features))
             else:    
-                feature = inputs[0].view(-1, self.input_size)
+                feature = torch_inputs[0].view(-1, self.input_size)
                 hx, cx = self.visual_ft(feature, (hx, cx))
                 visual = hx.view(1, -1)
             
@@ -139,20 +164,33 @@ class ActorCritic(torch.nn.Module):
         if self.arguments['use_gcn']:
             scores = torch.from_numpy(scores).type(self.dtype)
             scores = scores.view(1, scores.numel())
-            scores_512 = F.relu(self.score_to_512(scores))
-            nodes = []
-            for c in self.categories:
-                em = torch.from_numpy(self.embeddings[c]).type(self.dtype)
-                em = em.view(1, em.size(0))
-                em_512 = F.relu(self.semantic_ft(em))
-                nodes.append(torch.cat((scores_512, em_512), 1))
+            
+            if not self.arguments['yolo_gcn']:
+                scores_512 = F.relu(self.score_to_512(scores))
 
-            nodes = torch.stack(nodes).squeeze()
+            nodes = []
+            ems_512 = F.relu(self.semantic_ft(self.all_embeddings))
+            
+            if not self.arguments['yolo_gcn']:
+                nodes = torch.cat((scores_512.repeat(self.num_objects, 1), ems_512), 1)
+            else:
+                nodes = torch.cat((scores.repeat(self.num_objects, 1), ems_512), 1)
+                
             gcn_out = self.gcn(nodes, self.adj)
             gcn_out = gcn_out.view(1, gcn_out.numel())
             gcn_512 = F.relu(self.gcn_to_512(gcn_out))
 
             joint_embeddings = torch.cat((visual, semantic, gcn_512), 1)
+
+        elif self.arguments['use_graph']:
+            # relations = self.adj[self.cate2idx[word]].numpy()
+            # detections = inputs[0][:-4].astype(bool).astype(int)
+            # revec = torch.from_numpy(relations * detections).type(self.dtype)
+            revec = self.adj[self.cate2idx[word]] 
+            r = F.relu(self.graph_ft(revec))
+            r = r.view(1, r.numel())
+            joint_embeddings = torch.cat((visual, semantic, r), 1)
+
         else:
             joint_embeddings = torch.cat((visual, semantic), 1)
 

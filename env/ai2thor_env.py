@@ -14,8 +14,8 @@ class AI2ThorDumpEnv():
         """
         :param seed: (int)   Random seed
         :param config: (str)   Dictionary file storing cofigurations
-        :param: scene: (list)  Scene to train on
-        :param: objects: (list)  Target object to train on
+        :param: scene: (list)  Scene to train
+        :param: target: (list)  Target object to train
         """
         if seed is not None:
             np.random.seed(seed)
@@ -31,24 +31,20 @@ class AI2ThorDumpEnv():
 
         self.states = self.h5_file['locations'][()]
         self.graph = self.h5_file['graph'][()]
-        self.scores = self.h5_file['resnet_scores'][()] if arguments['resnet_score'] else self.h5_file['dump_features'][()][:, :-4].astype(bool).astype(int)
+        self.scores = self.h5_file['resnet_scores'][()] if not arguments['yolo_gcn'] else self.h5_file['dump_features'][()][:, :-4].astype(bool).astype(int)
         self.all_visible_objects = self.h5_file['all_visible_objects'][()].tolist()
         self.visible_objects = self.h5_file['visible_objects'][()]
         self.observations = self.h5_file['observations'][()]
-        self.target_locations = dict(zip(self.h5_file['all_visible_objects'][()],  self.h5_file['target_locations'][()]))
 
         assert self.target in self.all_visible_objects, "Target {} is unreachable in {}!".format(self.target, self.scene)
 
         self.resnet_features = self.h5_file['resnet_features'][()]
         self.dump_features = self.h5_file['dump_features'][()]
 
-        if arguments['pca']:
-            self.features = self.h5_file['pca_features'][()]
+        if arguments['onehot']:
+            self.features = self.dump_features
         else:
-            if arguments['onehot']:
-                self.features = self.dump_features
-            else:
-                self.features = np.hstack((self.resnet_features, self.dump_features))
+            self.features = self.resnet_features
 
         assert self.action_size <= self.graph.shape[1], "The number of actions exceeds the limit of environment."
 
@@ -62,11 +58,8 @@ class AI2ThorDumpEnv():
             # agent only has to reach the correct position
             self.offset = 2
 
-        if self.arguments['easy']:
-            self.target_locs = [tuple(self.target_locations[self.target][:self.offset])]
-        else:
-            self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
-            self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])        
+        self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
+        self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])        
 
         self.action_space = self.action_size 
         self.cv_action_onehot = np.identity(self.action_space)
@@ -89,7 +82,11 @@ class AI2ThorDumpEnv():
                                       '0 and {}!'.format(self.action_space - 1))
         k = self.current_state_id
         if self.graph[k][action] != -1:
-            self.current_state_id = int(self.graph[k][action])
+            if action == 2 or action == 3:
+                for _ in range(int(self.arguments['angle'] / 22.5)):
+                    self.current_state_id = int(self.graph[k][action])
+            else:                
+                self.current_state_id = int(self.graph[k][action])
                 
             if tuple(self.states[self.current_state_id][:self.offset]) in self.target_locs:
                 self.terminal = True
@@ -123,8 +120,13 @@ class AI2ThorDumpEnv():
 
     def reset(self):
         # reset parameters
-        self.current_state_id = random.randrange(self.states.shape[0])
-        
+        k = random.randrange(self.states.shape[0])
+
+        while self.states[k][2] % self.arguments['angle'] != 0.0:
+            k = random.randrange(self.states.shape[0])
+
+        self.current_state_id = k
+
         self.update_states(reset=True)
         self.terminal = False
         self.collided = False
@@ -162,13 +164,13 @@ class MultiSceneEnv():
         """
         :param seed: (int)   Random seed
         :param config: (str)   Dictionary file storing cofigurations
-        :param: scene: (list)  Scene to train on
-        :param: objects: (list)  Target object to train on
+        :param: scene: (list)  Scene to train
+        :param: objects: (list)  Target objects to train
         """
 
         if seed is not None:
             np.random.seed(seed)
-        
+            
         self.config = config
         self.arguments = arguments
         self.scene = scene
@@ -197,22 +199,19 @@ class MultiSceneEnv():
 
         self.states = self.h5_file['locations'][()]
         self.graph = self.h5_file['graph'][()]
-        self.scores = self.h5_file['resnet_scores'][()]
+        self.scores = self.h5_file['resnet_scores'][()] if not arguments['yolo_gcn'] else self.h5_file['dump_features'][()][:, :-4].astype(bool).astype(int)
         self.all_visible_objects = self.h5_file['all_visible_objects'][()].tolist()
         self.visible_objects = self.h5_file['visible_objects'][()]
         self.observations = self.h5_file['observations'][()]
-        self.target_locations = dict(zip(self.h5_file['all_visible_objects'][()],  self.h5_file['target_locations'][()]))
 
         self.resnet_features = self.h5_file['resnet_features'][()]
         self.dump_features = self.h5_file['dump_features'][()]
 
-        if arguments['pca']:
-            self.features = self.h5_file['pca_features'][()]
+        
+        if arguments['onehot']:
+            self.features = self.dump_features
         else:
-            if arguments['onehot']:
-                self.features = self.dump_features
-            else:
-                self.features = np.hstack((self.resnet_features, self.dump_features))
+            self.features = self.resnet_features
 
         assert self.action_size <= self.graph.shape[1], "The number of actions exceeds the limit of environment."
 
@@ -227,12 +226,8 @@ class MultiSceneEnv():
             self.offset = 2
 
         self.target = np.random.choice(self.targets)
-
-        if self.arguments['easy']:
-            self.target_locs = [tuple(self.target_locations[self.target][:self.offset])]
-        else:
-            self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
-            self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])        
+        self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
+        self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])        
         
         self.action_space = self.action_size 
         self.cv_action_onehot = np.identity(self.action_space)
@@ -256,8 +251,12 @@ class MultiSceneEnv():
                                       '0 and {}!'.format(self.action_space - 1))
         k = self.current_state_id
         if self.graph[k][action] != -1:
-            self.current_state_id = int(self.graph[k][action])
-                
+            if action == 2 or action == 3:
+                for _ in range(int(self.arguments['angle'] / 22.5)):
+                    self.current_state_id = int(self.graph[k][action])
+            else:                
+                self.current_state_id = int(self.graph[k][action])
+
             if tuple(self.states[self.current_state_id][:self.offset]) in self.target_locs:
                 self.terminal = True
                 self.collided = False
@@ -293,8 +292,13 @@ class MultiSceneEnv():
         self.target_ids = [idx for idx in range(len(self.states)) if self.target in self.visible_objects[idx].split(",")]
         self.target_locs = set([tuple(self.states[idx][:self.offset]) for idx in self.target_ids])        
 
+        k = random.randrange(self.states.shape[0])
+
+        while self.states[k][2] % self.arguments['angle'] != 0.0:
+            k = random.randrange(self.states.shape[0])
+
         # reset parameters
-        self.current_state_id = random.randrange(self.states.shape[0])
+        self.current_state_id = k
         
         self.update_states(reset=True)
         self.terminal = False

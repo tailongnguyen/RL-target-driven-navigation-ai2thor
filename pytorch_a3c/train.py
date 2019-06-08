@@ -43,7 +43,7 @@ def ensure_shared_grads(model, shared_model, gpu=False):
 def train(training_scene, train_object, rank, shared_model, scheduler, counter, lock, config, arguments=dict(), optimizer=None):
     torch.manual_seed(arguments['seed'] + rank)
     # To prevent out of memory
-    if (arguments['lstm'] and rank < 8):
+    if (arguments['train_cnn'] and rank < 10):
         arguments.update({"gpu_ids": [-1]})
 
     gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
@@ -77,9 +77,9 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
     success = []
     avg_entropies = []
     learning_rates = []
+    dist_to_goal = []
 
     start = time.time()
-
     episode_length = 0
 
     for epoch in range(arguments['num_epochs']):
@@ -106,6 +106,9 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
         log_probs = []
         rewards = []
         entropies = []
+        starting = env.current_state_id
+
+        dist_to_goal.append(min([env.shortest[starting][t] for t in env.target_ids]))
 
         for step in range(arguments['num_iters']):
             episode_length += 1
@@ -143,8 +146,8 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
             if done:
                 state, score, target = env.reset()
                     
-                print('[P-{}] Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
-                        .format(rank, episode_length, sum(rewards), (time.time() - start) / 3600))
+                print('[P-{}] Epoch: {}. Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
+                        .format(rank, epoch + 1, episode_length, sum(rewards), (time.time() - start) / 3600))
 
                 episode_length = 0
                 break
@@ -194,12 +197,9 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
                 delta_t = rewards[i] + arguments['gamma'] * values[i + 1] - values[i]
                 gae = gae * arguments['gamma'] * arguments['tau'] + delta_t
 
-                policy_loss = policy_loss - log_probs[i] * gae.detach() - \
-                              arguments['ec'] * entropies[i]
-            else:
-                policy_loss = policy_loss - log_probs[i] * advantage.detach() - \
-                              arguments['ec'] * entropies[i]
-
+            policy_loss = policy_loss - log_probs[i] * gae.detach() - \
+                          arguments['ec'] * entropies[i]
+        
         optimizer.zero_grad()
 
         (policy_loss + arguments['vc'] * value_loss).backward()
@@ -208,13 +208,13 @@ def train(training_scene, train_object, rank, shared_model, scheduler, counter, 
         ensure_shared_grads(model, shared_model, gpu=gpu_id >= 0)
         optimizer.step()
 
-        if epoch > 1000 and np.mean(success[-500:]) >= 0.9 and \
+        if (epoch + 1) % 1000 == 0 and np.mean(success[-500:]) >= 0.8 and \
             not os.path.isfile("training-history/{}/net_good.pth".format(arguments['about'])):
             torch.save(model.state_dict(), "training-history/{}/net_good.pth".format(arguments['about']))
 
         if (epoch + 1) % 2000 == 0:
             with open('training-history/{}/{}_{}_{}.pkl'.format(arguments['about'], training_scene, train_object, rank), 'wb') as f:
-                pickle.dump({"rewards": total_reward_for_num_steps_list, 
+                pickle.dump({"rewards": total_reward_for_num_steps_list, "dist_to_goal": dist_to_goal,
                             "success_rate": success, 'redundancies': redundancies,
                             "entropies": avg_entropies, 'lrs': learning_rates}, f, pickle.HIGHEST_PROTOCOL)
 
@@ -238,7 +238,6 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
     env = MultiSceneEnv(training_scene, config, arguments, seed=arguments['seed'] + rank)
     
     state, score, new_target = env.reset()
-    starting = env.current_state_id
     done = True
     print("Done initalizing process {}. Now find {} in {}! Use gpu: {}".format(rank, env.target, env.scene, 'yes' if gpu_id >= 0 else 'no'))
 
@@ -266,6 +265,7 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
 
     for epoch in range(arguments['num_epochs']):
         target = new_target
+        observed_objects = []
         if target not in random_tagets:
             random_tagets[target] = 1
         else:
@@ -294,6 +294,7 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
         log_probs = []
         rewards = []
         entropies = []
+        starting = env.current_state_id
 
         for step in range(arguments['num_iters']):
             episode_length += 1
@@ -315,6 +316,8 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
 
             if done:
                 success.append(1)
+                observed_objects = env.visible_objects[env.current_state_id].split(',')
+
             elif episode_length >= arguments['max_episode_length']:
                 success.append(0)
 
@@ -331,8 +334,8 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
             if done:
                 state, score, new_target = env.reset()
                     
-                print('[P-{}] Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
-                        .format(rank, episode_length, sum(rewards), (time.time() - start) / 3600))
+                print('[P-{}] Epoch: {}. Episode length: {}. Total reward: {:.3f}. Time elapsed: {:.3f}'\
+                        .format(rank, epoch + 1, episode_length, sum(rewards), (time.time() - start) / 3600))
 
                 episode_length = 0
                 break
@@ -377,20 +380,30 @@ def train_multi(training_scene, rank, shared_model, scheduler, counter, lock, co
             advantage = R - values[i]
             value_loss = value_loss + 0.5 * advantage.pow(2)
 
-            if arguments['use_gae']:
-                # Generalized Advantage Estimation
-                delta_t = rewards[i] + arguments['gamma'] * values[i + 1] - values[i]
-                gae = gae * arguments['gamma'] * arguments['tau'] + delta_t
+            # Generalized Advantage Estimation
+            delta_t = rewards[i] + arguments['gamma'] * values[i + 1] - values[i]
+            gae = gae * arguments['gamma'] * arguments['tau'] + delta_t
 
-                policy_loss = policy_loss - log_probs[i] * gae.detach() - \
-                              arguments['ec'] * entropies[i]
-            else:
-                policy_loss = policy_loss - log_probs[i] * advantage.detach() - \
-                              arguments['ec'] * entropies[i]
+            policy_loss = policy_loss - log_probs[i] * gae.detach() - \
+                          arguments['ec'] * entropies[i]
 
         optimizer.zero_grad()
 
-        (policy_loss + arguments['vc'] * value_loss).backward()
+        if not arguments['siamese']:
+            (policy_loss + arguments['vc'] * value_loss).backward()
+        else:
+            if len(observed_objects) > 0:
+                siamese_loss = 0
+                target_rep = model.learned_embedding(target)
+                for o in observed_objects:
+                    try:
+                        o_rep = model.learned_embedding(o)
+                    except KeyError:
+                        continue
+                    siamese_loss += torch.nn.MSELoss()(target_rep, o_rep.detach())
+
+                (policy_loss + arguments['vc'] * value_loss + siamese_loss * 0.1).backward()
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), arguments['max_grad_norm'])
 
         ensure_shared_grads(model, shared_model, gpu=gpu_id >= 0)

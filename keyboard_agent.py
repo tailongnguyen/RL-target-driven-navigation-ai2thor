@@ -52,18 +52,25 @@ def run(file_name=None):
 	controller = ai2thor.controller.Controller()
 	controller.start()
 
-	controller.reset("FloorPlan1")
-	event = controller.step(dict(action='Initialize', gridSize=0.5))
-	y_coord = event.metadata['agent']['position']['y']
+	controller.reset("FloorPlan203")
+	y_coord = 1.25
+	event = controller.step(dict(action='Initialize', gridSize=0.5, cameraY=y_coord, visibilityDistance=1.0))
 	all_visible_objects = list(np.unique([obj['objectType'] for obj in event.metadata['objects']]))
-	print(y_coord)
+	
+	rotation = 0.0
 	while True:  # making a loop
 		try:  # used try so that if user pressed other than the given key error will not be shown
 			key = click.getchar()
 			if key =='a':  # Rotate Left
-				event = controller.step(dict(action='RotateLeft'))           
+				rotation -= 22.5
+				if rotation < 0:
+					rotation = rotation + 360
+				event = controller.step(dict(action='Rotate', rotation=rotation))
 			elif key =='d':
-				event = controller.step(dict(action='RotateRight'))
+				rotation += 22.5
+				if rotation > 360:
+					rotation = rotation - 360
+				event = controller.step(dict(action='Rotate', rotation=rotation))
 			elif key =='w':
 				event = controller.step(dict(action='MoveAhead'))
 			elif key =='s':
@@ -78,12 +85,11 @@ def run(file_name=None):
 			elif key =='r':
 				scene = input("Scene id: ")
 				controller.reset('FloorPlan{}'.format(scene))
-				controller.random_initialize(unique_object_types=True)
-				event = controller.step(dict(action='Initialize', gridSize=0.5))
+				event = controller.step(dict(action='Initialize', gridSize=0.5, cameraY=y_coord))
 			else:
 				print("Key not supported! Try a, d, w, s, q, r.")
 			print((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z'], event.metadata['agent']['rotation']))
-			print([(obj['objectType'], obj['distance']) for obj in event.metadata['objects'] if obj['visible']])
+			# print([(obj['objectType'], obj['distance']) for obj in event.metadata['objects'] if obj['visible']])
 		except:
 			print("Key not supported! Try a, d, w, s, q, r.")
 
@@ -113,22 +119,28 @@ if __name__ == '__main__':
 	
 	# run()
 
+	angle = 45.0
+
 	human_agent_action = None
 	human_wants_restart = False
 	stop_requested = False
 	next_position = None
 	visible = None
 
-	f = h5py.File('dumped/FloorPlan10.hdf5', "r")
+	f = h5py.File('dumped/FloorPlan317.hdf5', "r")
 	observations = f['observations']
 	graph = f['graph']
 	visible_objects = f['visible_objects']
 	dump_features = f['dump_features']
+	states = f['locations'][()]
 
 	config = json.load(open('config.json'))
 	categories = list(config['new_objects'].keys())
 
-	current_position = np.random.randint(0, observations.shape[0])
+	k = np.random.randint(0, observations.shape[0])
+	while states[k][2] % angle != 0.0:
+		k = np.random.randint(0, observations.shape[0])
+	current_position = k
 
 	viewer = SimpleImageViewer()
 	viewer.imshow(observations[current_position].astype(np.uint8))
@@ -142,17 +154,27 @@ if __name__ == '__main__':
 		# waiting for keyboard input
 		if human_agent_action is not None:
 			# move actions
-			next_position = graph[current_position][human_agent_action]
+			if human_agent_action == 2 or human_agent_action == 3:
+				next_position = current_position
+				for _ in range(int(angle/ 22.5)):
+					next_position = graph[next_position][human_agent_action]
+			else:
+				next_position = graph[current_position][human_agent_action]
+				
 			current_position = next_position if next_position != -1 else current_position
-			print(dump_features[current_position][-4:])
 			distances = [(categories[i], dump_features[current_position][i]) for i in list(np.where(dump_features[current_position][:-4] > 0)[0])]
+			print(distances, dump_features[current_position][-4:])
 			visible = visible_objects[current_position].split(',')
 			human_agent_action = None
 
 		# waiting for reset command
 		if human_wants_restart:
 			# reset agent to random location
-			current_position = np.random.randint(0, observations.shape[0])
+			k = np.random.randint(0, observations.shape[0])
+			while states[k][2] % angle != 0.0:
+				k = np.random.randint(0, observations.shape[0])
+			current_position = k
+
 			human_wants_restart = False
 
 		# check collision

@@ -5,6 +5,8 @@ import h5py
 import re
 import click
 import json
+import os
+import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,6 +19,10 @@ ALL_POSSIBLE_ACTIONS = [
     'MoveBack',
     'MoveLeft',
 ]
+
+parser = argparse.ArgumentParser(description='Dumping AI2THOR scenes')
+
+parser.add_argument('--angle', type=float, default=22.5)
 
 def check_size(scene):
     f = h5py.File("dumped/{}.hdf5".format(scene), "w")
@@ -35,7 +41,6 @@ def check_size(scene):
     locations.append((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
 
     # Using BFS to discover all reachable positions in current environment.
-
     visited = set()
     visited.add((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
 
@@ -92,20 +97,18 @@ def cal_min_dist(index, all_locs, loc2idx):
     return distance
 
 
-def dump(scene="FloorPlan21", resolution=(300, 300)):
+def dump(scene, angle, resolution=(300, 300)):
     '''
     Dump needed data to hdf5 file to speed up training. Dumped file can be loaded using: f = h5py.File(filename, 'r'), where:
     - f['locations'][()]: numpy array of all states in format (x, z, rotation, looking angle)
     - f['observations'][()]: numpy array of RGB images of corresponding states in f['locations']
-    - f['graph'][()]: numpy array representing transition graph between states. e.g: f[0] = array([ 16., 272.,   4.,  12.,   1.,  -1.], dtype=float32)
+    - f['graph'][()]: numpy array representing transition graph between states. e.g: f[0] = array([ 16., 272.,  1.,  -1.], dtype=float32)
         means from 1st locations, the agent will reach 16th state by taking action 0 (move forward), 272th state by taking action 1 (move backward),
-        reach 4th state by taking action 2 (rotate right), reach 12th state by taking action 3 (rotate left), 
-        reach 1th state by taking action 4 (look down) and cannot take action 5 (look up) indicated by -1 value.
+        reach 1th state by taking action 2 (rotate right) and cannot take action 3 (rotate left) indicated by -1 value.
     - f['visible_objects'][()]: visible objects at corresponding states in f['locations']
     - f['shortest'][()]: numpy array with shape of (num_states, num_states) indicating the shortest path length between 
         every pair of states.
     '''
-
     f = h5py.File("dumped/{}.hdf5".format(scene), "w")
 
     observations = []
@@ -117,7 +120,7 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     controller.start()
     controller.reset(scene)
 
-    event = controller.step(dict(action='Initialize', gridSize=0.5))
+    event = controller.step(dict(action='Initialize', gridSize=0.5, cameraY=1.0, visibilityDistance=1.0))
     y_coord = event.metadata['agent']['position']['y']
 
     locations.append((event.metadata['agent']['position']['x'], event.metadata['agent']['position']['z']))
@@ -143,16 +146,17 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     print("{} locations".format(len(all_locs)))
     states = []
 
+    rotations = np.linspace(0, 360, int(360 // angle) + 1)[:-1].tolist()
+    movement = {0: [1, 0], 90.0: [0, 1], 180.0: [-1, 0], 270.0: [0, -1], 22.5: [1, 0], 67.5: [0, 1], 45.0: [1, 1], 112.5: [0, 1], 135.0: [-1, 1], 157.5: [-1, 0], 202.5: [-1, 0], 225.0: [-1, -1], 247.5: [0, -1], 292.5: [0, -1], 315: [1, -1], 337.5: [1, 0]}
     # Adding rotations and looking angles
     for loc in all_locs:
-        for rot in [0, 90, 180, 270]:
+        for rot in rotations:
             states.append((loc[0], loc[1], rot))
             # for horot in [-30, 0, 30, 60]:
                 # states.append((loc[0], loc[1], rot, horot))
 
     # ------------------------------------------------------------------------------
     ## Calculate shortest path length array
-
     sta2idx = dict(zip(states, range(len(states))))
     loc2idx = dict(zip(all_locs, range(len(all_locs))))
 
@@ -179,24 +183,18 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
 
     graph = np.zeros(shape=(len(states), 4), dtype=int)
 
-    directions = {0: 1, 90: 1, 180: -1, 270: -1}
-
     for state in states:
         loc = (state[0], state[1])
         rot = state[2]
         
         to_states = []
 
-        if rot == 0 or rot == 180:
-            to_states.append((loc[0], loc[1] + directions[rot] * 0.5, rot)) # move ahead
-            to_states.append((loc[0], loc[1] - directions[rot] * 0.5, rot)) # move back
+        move = movement[rot]
+        to_states.append((loc[0] + move[1] * 0.5, loc[1] + move[0] * 0.5, rot)) # move ahead
+        to_states.append((loc[0] - move[1] * 0.5, loc[1] - move[0] * 0.5, rot)) # move back
 
-        else:
-            to_states.append((loc[0] + directions[rot] * 0.5, loc[1], rot)) # move ahead
-            to_states.append((loc[0] - directions[rot] * 0.5, loc[1], rot)) # move back
-
-        to_states.append((loc[0], loc[1], rot + 90 if rot <= 180 else 0)) # turn right
-        to_states.append((loc[0], loc[1], rot - 90 if rot >= 90 else 270)) # turn left
+        to_states.append((loc[0], loc[1], rot + angle if rot + angle < 360 else 0)) # turn right
+        to_states.append((loc[0], loc[1], rot - angle if rot - angle >= 0 else 360 - angle)) # turn left
         
         # to_states.append((loc[0], loc[1], rot + 30)) # look down
         # to_states.append((loc[0], loc[1], rot, horot - 30)) # look up
@@ -240,10 +238,51 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
             pos = states[graph[sta2idx[pos]][1]]
             assert pos[2] == 90
 
-        laser[(loc[0], loc[1], 0)] = [north, south, right, left]
-        laser[(loc[0], loc[1], 180)] = [south, north, left, right]
-        laser[(loc[0], loc[1], 90)] = [right, left, south, north]
-        laser[(loc[0], loc[1], 270)] = [left, right, north, south]
+        for r in rotations:
+            if r > 315.0 or r < 45.0:
+                laser[(loc[0], loc[1], r)] = [north, south, right, left]
+            elif r > 45.0 and r < 135.0:
+                laser[(loc[0], loc[1], r)] = [right, left, south, north]
+            elif r > 135.0 and r < 225.0:
+                laser[(loc[0], loc[1], r)] = [south, north, left, right]
+            elif r > 225.0 and r < 315.0:
+                laser[(loc[0], loc[1], r)] = [left, right, north, south]
+
+    if 45.0 in rotations:
+
+        for loc in all_locs:
+            pos = (loc[0], loc[1], 45.0)
+            north = 0 
+            while graph[sta2idx[pos]][0] != -1:
+                north += 1
+                pos = states[graph[sta2idx[pos]][0]]
+                assert pos[2] == 45.0
+
+            pos = (loc[0], loc[1], 45.0)
+            south = 0 
+            while graph[sta2idx[pos]][1] != -1:
+                south += 1
+                pos = states[graph[sta2idx[pos]][1]]
+                assert pos[2] == 45.0
+
+            pos = (loc[0], loc[1], 135.0)
+            right = 0 
+            while graph[sta2idx[pos]][0] != -1:
+                right += 1
+                pos = states[graph[sta2idx[pos]][0]]
+                assert pos[2] == 135.0
+
+            pos = (loc[0], loc[1], 135.0)
+            left = 0 
+            while graph[sta2idx[pos]][1] != -1:
+                left += 1
+                pos = states[graph[sta2idx[pos]][1]]
+                assert pos[2] == 135.0
+
+            laser[(loc[0], loc[1], 45.0)] = [north, south, right, left]
+            laser[(loc[0], loc[1], 225.0)] = [south, north, left, right]
+            laser[(loc[0], loc[1], 135.0)] = [right, left, south, north]
+            laser[(loc[0], loc[1], 315.0)] = [left, right, north, south]
 
     lasers = []
     for state in states:
@@ -255,15 +294,14 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
 
     for state in states:
         vis_objects = set()
-        for horot in [-30, 0, 30, 60]:
-            event = controller.step(dict(action='TeleportFull', x=state[0], y=y_coord, z=state[1], rotation=state[2], horizon=horot))
-            if horot == 0:
-                resized_frame = cv2.resize(event.frame, (resolution[0], resolution[1]))
-                observations.append(resized_frame)
+        event = controller.step(dict(action='TeleportFull', x=state[0], y=1.25, z=state[1], rotation=state[2], horizon=30))
+            
+        resized_frame = cv2.resize(event.frame, (resolution[0], resolution[1]))
+        observations.append(resized_frame)
         
-            visible = [obj for obj in event.metadata['objects'] if obj['visible']]
-            for obj in visible:
-                vis_objects.add(obj['objectType'])
+        visible = [obj for obj in event.metadata['objects'] if obj['visible']]
+        for obj in visible:
+            vis_objects.add(obj['objectType'])
 
         if len(vis_objects) > 0:
             visible_objects.append(",".join(list(vis_objects)))
@@ -280,14 +318,7 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     for c in ['Lamp', 'PaperTowelRoll', 'Glassbottle']:
         if c in all_visible_objects:
             all_visible_objects.remove(c)
-
-    target_locations = []
-    for target in all_visible_objects:
-        target_ids = [idx for idx in range(len(states)) if target in visible_objects[idx].split(",")]
-        target_locs = [states[idx] for idx in target_ids]
-        target_loc = list(target_locs[np.random.choice(range(len(target_locs)))])
-        target_locations.append(target_loc)
-
+            
     controller.stop()
 
     f.create_dataset("locations", data=np.asarray(states, np.float32))
@@ -297,7 +328,6 @@ def dump(scene="FloorPlan21", resolution=(300, 300)):
     f.create_dataset("all_visible_objects", data=np.array(all_visible_objects, dtype=object), dtype=h5py.special_dtype(vlen=str))
     f.create_dataset("shortest", data=shortest_state)
     f.create_dataset("lasers", data=np.asarray(lasers, np.float32))
-    f.create_dataset("target_locations", data=np.asarray(target_locations, np.float32))
     f.close()
 
     return y_coord
@@ -333,7 +363,7 @@ def dump_resnet(tmp, extractor, normalize, scene="FloorPlan28"):
     f.create_dataset("resnet_scores", data=np.asarray(resnet_scores, np.float32))
     f.close()
 
-def dump_feature(scene, y_coord, cat2idx):
+def dump_feature(scene, cat2idx):
     f = h5py.File("dumped/{}.hdf5".format(scene), "a")
     states = f['locations'][()]
     laser = f['lasers'][()]
@@ -346,7 +376,7 @@ def dump_feature(scene, y_coord, cat2idx):
     event = controller.step(dict(action='Initialize', gridSize=0.5, visibilityDistance=1000.0))
 
     for i, state in enumerate(states):
-        event = controller.step(dict(action='TeleportFull', x=state[0], y=y_coord, z=state[1], rotation=state[2], horizon=0))
+        event = controller.step(dict(action='TeleportFull', x=state[0], y=1.25, z=state[1], rotation=state[2], horizon=30))
         visible = [obj for obj in event.metadata['objects'] if obj['visible']]
         df = np.zeros(len(cat2idx) + 4)
         df[-4:] = laser[i].tolist()
@@ -366,8 +396,127 @@ def dump_feature(scene, y_coord, cat2idx):
 if __name__ == '__main__':
     config = json.load(open("config.json"))
     cat2idx = config['new_objects']
-    scenes = {'FloorPlan1': 41, 'FloorPlan2': 34, 'FloorPlan3': 1, 'FloorPlan4': 12, 'FloorPlan5': 25, 'FloorPlan6': 7, 'FloorPlan7': 91, 'FloorPlan8': 48, 'FloorPlan9': 19, 'FloorPlan10': 61, 'FloorPlan11': 19, 'FloorPlan12': 23, 'FloorPlan13': 50, 'FloorPlan14': 29, 'FloorPlan15': 18, 'FloorPlan16': 45, 'FloorPlan17': 25, 'FloorPlan18': 62, 'FloorPlan19': 19, 'FloorPlan20': 24, 'FloorPlan21': 14, 'FloorPlan22': 38, 'FloorPlan23': 14, 'FloorPlan24': 20, 'FloorPlan25': 11, 'FloorPlan26': 11, 'FloorPlan27': 6, 'FloorPlan28': 23, 'FloorPlan29': 23, 'FloorPlan30': 21, 'FloorPlan201': 58, 'FloorPlan202': 35, 'FloorPlan203': 150, 'FloorPlan204': 36, 'FloorPlan205': 60, 'FloorPlan206': 23, 'FloorPlan207': 45, 'FloorPlan208': 67, 'FloorPlan209': 100, 'FloorPlan210': 65, 'FloorPlan211': 33, 'FloorPlan212': 26, 'FloorPlan213': 64, 'FloorPlan214': 46, 'FloorPlan215': 108, 'FloorPlan216': 32, 'FloorPlan217': 36, 'FloorPlan218': 42, 'FloorPlan219': 47, 'FloorPlan220': 63, 'FloorPlan221': 28, 'FloorPlan222': 19, 'FloorPlan223': 56, 'FloorPlan224': 81, 'FloorPlan225': 1, 'FloorPlan226': 10, 'FloorPlan227': 61, 'FloorPlan228': 16, 'FloorPlan229': 54, 'FloorPlan230': 108, 'FloorPlan301': 36, 'FloorPlan302': 26, 'FloorPlan303': 20, 'FloorPlan304': 29, 'FloorPlan305': 19, 'FloorPlan306': 22, 'FloorPlan307': 23, 'FloorPlan308': 30, 'FloorPlan309': 67, 'FloorPlan310': 20, 'FloorPlan311': 62, 'FloorPlan312': 20, 'FloorPlan313': 27, 'FloorPlan314': 23, 'FloorPlan315': 24, 'FloorPlan316': 29, 'FloorPlan317': 39, 'FloorPlan318': 22, 'FloorPlan319': 27, 'FloorPlan320': 15, 'FloorPlan321': 37, 'FloorPlan322': 19, 'FloorPlan323': 44, 'FloorPlan324': 51, 'FloorPlan325': 69, 'FloorPlan326': 10, 'FloorPlan327': 28, 'FloorPlan328': 20, 'FloorPlan329': 27, 'FloorPlan330': 64, 'FloorPlan401': 27, 'FloorPlan402': 22, 'FloorPlan403': 21, 'FloorPlan404': 14, 'FloorPlan405': 10, 'FloorPlan406': 27, 'FloorPlan407': 12, 'FloorPlan408': 1, 'FloorPlan409': 10, 'FloorPlan410': 20, 'FloorPlan411': 8, 'FloorPlan412': 7, 'FloorPlan413': 18, 'FloorPlan414': 14, 'FloorPlan415': 14, 'FloorPlan416': 23, 'FloorPlan417': 15, 'FloorPlan418': 18, 'FloorPlan419': 2, 'FloorPlan420': 2, 'FloorPlan421': 8, 'FloorPlan422': 9, 'FloorPlan423': 12, 'FloorPlan424': 6, 'FloorPlan425': 7, 'FloorPlan426': 10, 'FloorPlan427': 12, 'FloorPlan428': 17, 'FloorPlan429': 13, 'FloorPlan430': 28}
-    
+    scenes = {'FloorPlan1': 41,
+             'FloorPlan2': 34,
+             'FloorPlan3': 1,
+             'FloorPlan4': 12,
+             'FloorPlan5': 25,
+             'FloorPlan6': 7,
+             'FloorPlan7': 91,
+             'FloorPlan8': 48,
+             'FloorPlan9': 19,
+             'FloorPlan10': 61,
+             'FloorPlan11': 19,
+             'FloorPlan12': 23,
+             'FloorPlan13': 50,
+             'FloorPlan14': 29,
+             'FloorPlan15': 18,
+             'FloorPlan16': 45,
+             'FloorPlan17': 25,
+             'FloorPlan18': 62,
+             'FloorPlan19': 19,
+             'FloorPlan20': 24,
+             'FloorPlan21': 14,
+             'FloorPlan22': 38,
+             'FloorPlan23': 14,
+             'FloorPlan24': 20,
+             'FloorPlan25': 11,
+             'FloorPlan26': 11,
+             'FloorPlan27': 6,
+             'FloorPlan28': 23,
+             'FloorPlan29': 23,
+             'FloorPlan30': 21,
+             'FloorPlan201': 58,
+             'FloorPlan202': 35,
+             'FloorPlan203': 150,
+             'FloorPlan204': 36,
+             'FloorPlan205': 60,
+             'FloorPlan206': 23,
+             'FloorPlan207': 45,
+             'FloorPlan208': 67,
+             'FloorPlan209': 100,
+             'FloorPlan210': 65,
+             'FloorPlan211': 33,
+             'FloorPlan212': 26,
+             'FloorPlan213': 64,
+             'FloorPlan214': 46,
+             'FloorPlan215': 108,
+             'FloorPlan216': 32,
+             'FloorPlan217': 36,
+             'FloorPlan218': 42,
+             'FloorPlan219': 47,
+             'FloorPlan220': 63,
+             'FloorPlan221': 28,
+             'FloorPlan222': 19,
+             'FloorPlan223': 56,
+             'FloorPlan224': 81,
+             'FloorPlan225': 1,
+             'FloorPlan226': 10,
+             'FloorPlan227': 61,
+             'FloorPlan228': 16,
+             'FloorPlan229': 54,
+             'FloorPlan230': 108,
+             'FloorPlan301': 36,
+             'FloorPlan302': 26,
+             'FloorPlan303': 20,
+             'FloorPlan304': 29,
+             'FloorPlan305': 19,
+             'FloorPlan306': 22,
+             'FloorPlan307': 23,
+             'FloorPlan308': 30,
+             'FloorPlan309': 67,
+             'FloorPlan310': 20,
+             'FloorPlan311': 62,
+             'FloorPlan312': 20,
+             'FloorPlan313': 27,
+             'FloorPlan314': 23,
+             'FloorPlan315': 24,
+             'FloorPlan316': 29,
+             'FloorPlan317': 39,
+             'FloorPlan318': 22,
+             'FloorPlan319': 27,
+             'FloorPlan320': 15,
+             'FloorPlan321': 37,
+             'FloorPlan322': 19,
+             'FloorPlan323': 44,
+             'FloorPlan324': 51,
+             'FloorPlan325': 69,
+             'FloorPlan326': 10,
+             'FloorPlan327': 28,
+             'FloorPlan328': 20,
+             'FloorPlan329': 27,
+             'FloorPlan330': 64,
+             'FloorPlan401': 27,
+             'FloorPlan402': 22,
+             'FloorPlan403': 21,
+             'FloorPlan404': 14,
+             'FloorPlan405': 10,
+             'FloorPlan406': 27,
+             'FloorPlan407': 12,
+             'FloorPlan408': 1,
+             'FloorPlan409': 10,
+             'FloorPlan410': 20,
+             'FloorPlan411': 8,
+             'FloorPlan412': 7,
+             'FloorPlan413': 18,
+             'FloorPlan414': 14,
+             'FloorPlan415': 14,
+             'FloorPlan416': 23,
+             'FloorPlan417': 15,
+             'FloorPlan418': 18,
+             'FloorPlan419': 2,
+             'FloorPlan420': 2,
+             'FloorPlan421': 8,
+             'FloorPlan422': 9,
+             'FloorPlan423': 12,
+             'FloorPlan424': 6,
+             'FloorPlan425': 7,
+             'FloorPlan426': 10,
+             'FloorPlan427': 12,
+             'FloorPlan428': 17,
+             'FloorPlan429': 13,
+             'FloorPlan430': 28}
+
     # scene_size = {}
     # for room in config['rooms'].keys():
     #     # train_objects = config['rooms'][room]['train_objects']
@@ -377,7 +526,8 @@ if __name__ == '__main__':
 
     # print(scene_size)
 
-
+    args = parser.parse_args()
+    assert args.angle in [22.5, 45.0, 90.0]
 
     tmp = models.resnet50(pretrained=True)
     tmp.eval()
@@ -389,24 +539,26 @@ if __name__ == '__main__':
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
+    # for i in range(1, 31):
+    #     scene = "FloorPlan{}".format(i)
+    #     if not os.path.isfile("dumped/{}.hdf5".format(scene)) and scenes[scene] > 20:
 
-    for scene in [   'FloorPlan1',
-                     "FloorPlan2",
-                     "FloorPlan10",
-                     "FloorPlan28",
-                     "FloorPlan201"]:
-                     # "FloorPlan202",
-                     # "FloorPlan204",
-                     # "FloorPlan206",
-                     # "FloorPlan301",
-                     # "FloorPlan302",
-                     # "FloorPlan309",
-                     # "FloorPlan311",
-                     # "FloorPlan401",
-                     # "FloorPlan402",
-                     # "FloorPlan406",
-                     # "FloorPlan430"][:1]:
-
-        y_coord = dump(scene, config['resolution'])
-        dump_feature(scene, y_coord, cat2idx)
-        dump_resnet(tmp, extractor, normalize, scene)
+    for scene in [
+             'FloorPlan303',
+             'FloorPlan304',
+             'FloorPlan305',
+             'FloorPlan306',
+             'FloorPlan307',
+             'FloorPlan308',
+             'FloorPlan309',
+             'FloorPlan310',
+             'FloorPlan311',
+             'FloorPlan312',
+             'FloorPlan313',
+             'FloorPlan314',
+             'FloorPlan315',
+             'FloorPlan316',
+             'FloorPlan317']:
+            dump(scene, args.angle, config['resolution'])
+            dump_feature(scene, cat2idx)
+            dump_resnet(tmp, extractor, normalize, scene)

@@ -3,10 +3,17 @@
    "default_reward": -0.01,
    "success_reward": 10.0,
    "collide_reward": -0.1,
+<<<<<<< HEAD
+   "embeddings_onehot": "/home/tailongnguyen/thesis/RL-target-driven-navigation-ai2thor/embedding_onehot.pkl", 
+   "embeddings_fasttext": "/home/tailongnguyen/thesis/RL-target-driven-navigation-ai2thor/embedding_fasttext300.pkl", 
+   "dump_path": "/home/tailongnguyen/thesis/RL-target-driven-navigation-ai2thor/dumped/",
+   "adj_file": "/home/tailongnguyen/thesis/build_graph/new_relations.npy",
+=======
    "embeddings_onehot": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_onehot.pkl", 
    "embeddings_fasttext": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/embedding_fasttext300.pkl", 
    "dump_path": "/home/yoshi/thesis/RL-target-driven-navigation-ai2thor/dumped/",
    "adj_file": "/home/yoshi/thesis/build_graph/new_relations.npy",
+>>>>>>> 3e16083a7dd07023980fd5cddf4ec521c2796629
    "all_objects": ["KeyChain", "Bread", "Potato", "Mug", "PaintingHanger", "Book", "ToiletPaper", "TableTop", 
                   "Chair", "Bed", "Container", "Painting", "Watch", "Apple", "Sink", "Cabinet", "StoveKnob", 
                   "Pan", "Cloth", "ShowerDoor", "CoffeeMachine", "Toaster", "Box", "CellPhone", "Tomato", 
@@ -16,6 +23,37 @@
                   "WateringCan", "Television", "AlarmClock", "CreditCard"],
    "picked": {
        "FloorPlan1": {"test": ["ButterKnife", "GarbageCan", "Kettle", "PepperShaker", "SoapBottle", "Spatula", "Statue"]},
+<<<<<<< HEAD
+       "FloorPlan2": {"test": ["CellPhone", "GarbageCan", "Kettle", "Ladle", "Spatula", "SaltShaker"]},
+       "FloorPlan10": {"test": ["ButterKnife", "CellPhone", "GarbageCan", "SoapBottle", "Statue", "Toaster", "Spatula"]},
+       "FloorPlan28": {"test": ["Blinds", "ButterKnife", "SoapBottle", "SaltShaker"]},
+       "FloorPlan201": {"test": ["RemoteControl", "Painting"]}
+   },
+   "rooms": {
+        "Kitchens":{
+            "train_scenes": [
+                    "FloorPlan1", 
+                    "FloorPlan2", 
+                    "FloorPlan5", 
+                    "FloorPlan8", 
+                    "FloorPlan10", 
+                    "FloorPlan16", 
+                    "FloorPlan29", 
+                    "FloorPlan12", 
+                    "FloorPlan17", 
+                    "FloorPlan30", 
+                    "FloorPlan14", 
+                    "FloorPlan13", 
+                    "FloorPlan22", 
+                    "FloorPlan7", 
+                    "FloorPlan20"],
+            "test_scenes": [
+                    "FloorPlan18", 
+                    "FloorPlan28" 
+            ],
+            "train_objects": ["GarbageCan", "Sink", "Bread", "StoveKnob", "SinkBasin", "StoveBurner", "Fridge", "CounterTop", "Microwave", "LightSwitch", "CoffeeMachine", "Cabinet"],
+            "test_objects": ["Toaster", "Mug", "Potato", "Window", "Bowl"]
+=======
        "FloorPlan2": {"test": ["CellPhone", "GarbageCan", "Kettle", "Ladle", "Spatula", "SoapBottle", "SaltShaker"]},
        "FloorPlan10": {"test": ["ButterKnife", "CellPhone", "GarbageCan", "SoapBottle", "Statue", "Toaster", "Spatula"]},
        "FloorPlan28": {"test": ["Blinds", "ButterKnife", "SoapBottle", "SaltShaker"]}
@@ -28,13 +66,12 @@
                      "FloorPlan28"],
             "train_objects": ["Fridge", "SoapBottle", "CoffeeMachine", "Microwave", "SaltShaker", "Tomato", "Bread", "StoveBurner", "StoveKnob", "Pan", "DishSponge", "Pot", "Bowl", "SinkBasin", "CounterTop", "Drawer", "Sink", "Cabinet", "Mug", "LightSwitch"],
             "test_objects": ["GarbageCan", "Toaster", "Spatula", "PepperShaker"]
+>>>>>>> 3e16083a7dd07023980fd5cddf4ec521c2796629
         },
         "Living Rooms": {
-            "scenes": ["FloorPlan201",
+            "train_scenes": [
+                     "FloorPlan201",
                      "FloorPlan202",
-                     "FloorPlan203",
-                     "FloorPlan204",
-                     "FloorPlan205",
                      "FloorPlan206",
                      "FloorPlan207",
                      "FloorPlan208",
@@ -44,92 +81,53 @@
                      "FloorPlan212",
                      "FloorPlan213",
                      "FloorPlan214",
-                     "FloorPlan215",
                      "FloorPlan216",
                      "FloorPlan217",
                      "FloorPlan218",
-                     "FloorPlan219",
-                     "FloorPlan220",
-                     "FloorPlan221",
-                     "FloorPlan222",
-                     "FloorPlan223",
-                     "FloorPlan224",
-                     "FloorPlan225",
-                     "FloorPlan226",
-                     "FloorPlan227",
-                     "FloorPlan228",
-                     "FloorPlan229",
-                     "FloorPlan230"],
-            "train_objects": ["Television", "HousePlant", "Chair", "TableTop", "Box", "Cloth", "Newspaper", "KeyChain", "WateringCan", "PaintingHanger"],
-            "test_objects" : ["Painting", "Statue"]
+                     "FloorPlan219"
+                     ],
+            "test_scenes": [
+                    "FloorPlan204",
+                    "FloorPlan205"
+            ],
+            "train_objects": ["ArmChair", "GarbageCan", "TableTop", "Sofa", "Television", "HousePlant", "Vase", "Painting", "FloorLamp", "Window"],
+            "test_objects" : ["Box", "Pillow", "RemoteControl", "Chair", "GarbageCan", "Laptop"]
         },
         "Bedrooms": {
-            "scenes": ["FloorPlan301",
+            "train_scenes": [
+                     "FloorPlan314",
+                     "FloorPlan301",
+                     "FloorPlan313",
+                     "FloorPlan306",
                      "FloorPlan302",
-                     "FloorPlan303",
                      "FloorPlan304",
                      "FloorPlan305",
-                     "FloorPlan306",
-                     "FloorPlan307",
-                     "FloorPlan308",
-                     "FloorPlan309",
                      "FloorPlan310",
-                     "FloorPlan311",
                      "FloorPlan312",
-                     "FloorPlan313",
-                     "FloorPlan314",
-                     "FloorPlan315",
+                     "FloorPlan308"],
+            "test_scenes":[
                      "FloorPlan316",
-                     "FloorPlan317",
-                     "FloorPlan318",
-                     "FloorPlan319",
-                     "FloorPlan320",
-                     "FloorPlan321",
-                     "FloorPlan322",
-                     "FloorPlan323",
-                     "FloorPlan324",
-                     "FloorPlan325",
-                     "FloorPlan326",
-                     "FloorPlan327",
-                     "FloorPlan328",
-                     "FloorPlan329",
-                     "FloorPlan330"],
-            "train_objects": ["Painting", "HousePlant", "CellPhone", "LightSwitch", "Candle", "TableTop", "Bed", "Lamp", "Statue", "Book", "CreditCard", "KeyChain", "Bowl", "Pen", "Box", "Pencil", "Blinds", "Laptop", "AlarmClock"],
-            "test_objects" : ["Television", "Mirror", "Cabinet"]
+                     "FloorPlan317"
+                     ],
+            "train_objects": ["Shelf", "AlarmClock", "GarbageCan", "KeyChain", "LightSwitch", "Bed", "Mirror", "Chair", "Desk", "Pen"],
+
+            "test_objects" : ["CellPhone", "Pencil", "Book", "Drawer", "Laptop"]
         },
         "Bathrooms": {
-            "scenes": ["FloorPlan401",
-                     "FloorPlan402",
-                     "FloorPlan403",
-                     "FloorPlan404",
-                     "FloorPlan405",
-                     "FloorPlan406",
-                     "FloorPlan407",
-                     "FloorPlan408",
-                     "FloorPlan409",
-                     "FloorPlan410",
-                     "FloorPlan411",
-                     "FloorPlan412",
-                     "FloorPlan413",
-                     "FloorPlan414",
-                     "FloorPlan415",
-                     "FloorPlan416",
-                     "FloorPlan417",
-                     "FloorPlan418",
-                     "FloorPlan419",
-                     "FloorPlan420",
-                     "FloorPlan421",
-                     "FloorPlan422",
-                     "FloorPlan423",
-                     "FloorPlan424",
-                     "FloorPlan425",
-                     "FloorPlan426",
-                     "FloorPlan427",
-                     "FloorPlan428",
-                     "FloorPlan429",
-                     "FloorPlan430"],
-            "train_objects": ["SprayBottle", "Painting", "Candle", "LightSwitch", "Sink", "Cabinet", "TowelHolder", "Watch", "ToiletPaper", "ShowerDoor", "SoapBottle"],
-            "test_objects" : ["SoapBar", "Towel"]  
+            "train_scenes": [
+              "FloorPlan410",       
+             "FloorPlan417",
+             "FloorPlan418",
+             "FloorPlan423",
+             "FloorPlan427",
+             "FloorPlan428",
+             "FloorPlan429",
+             "FloorPlan430"],
+            "test_scenes":[
+              "FloorPlan414"
+            ],
+            "train_objects": ["Candle", "LightSwitch", "Sink", "SinkBasin", "SoapBottle", "Toilet", "TowelHolder", "Mirror", "SoapBar", "GarbageCan"],
+            "test_objects" :   ["ToiletPaperHanger",  "Towel"]
         }
     },
     "graph": "",

@@ -46,14 +46,12 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
 
     state, score, target = env.reset()
     done = True
-
-    start_time = time.time()
-
-    # a quick hack to prevent the agent from stucking
-    actions = deque(maxlen=100)
+    
+    starting = env.current_state_id
     results[rank] = 0
-
+    
     for ep in range(1000):
+        agent_step = 0
         for step in range(arguments['num_iters']):
             if model is not None:
                 with torch.no_grad():
@@ -66,21 +64,15 @@ def test(testing_scene, test_object, rank, shared_model, results, config, argume
                 action = np.random.choice(range(arguments['action_size']))
 
             state, score, reward, done = env.step(action)
-            # a quick hack to prevent the agent from stucking
-            # i.e. in test mode an agent can repeat an action ad infinitum
-            actions.append(action)
-            if actions.count(actions[0]) == actions.maxlen:
-                # print('In test. Episode over because agent repeated action {} times'.format(
-                                                                                    # actions.maxlen))
-                break
+            ending = env.current_state_id
 
+            if action < 2:
+                agent_step += 1
+            
             if done:                
-                actions.clear()
-                results[rank] += 1
+                results[rank] += env.shortest[ending, starting] / max(agent_step, env.shortest[ending, starting])
                 state, score, target = env.reset()
                 break
-
-        # print('[P-{}] ep {}/{}: {}'.format(rank, ep+1, arguments['num_epochs'], 'fail' if not done else 'success'))
 
     results[rank] = results[rank] / 1000
 
@@ -89,8 +81,11 @@ def test_multi(testing_scene, rank, shared_model, results, config, arguments=dic
 
     env = MultiSceneEnv(testing_scene, config, arguments, arguments['seed'] + rank)
 
+    # gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
+    gpu_id = -1
+    print("Done initalizing process {}: {}! Use gpu: {}".format(rank, testing_scene, 'yes' if gpu_id >= 0 else 'no'))
+
     if shared_model is not None:
-        gpu_id = arguments['gpu_ids'][rank % len(arguments['gpu_ids'])]
         # gpu_id = -1
 
         model = ActorCritic(config, arguments, gpu_id)
@@ -105,15 +100,17 @@ def test_multi(testing_scene, rank, shared_model, results, config, arguments=dic
             # print("[P{}] loaded model".format(rank))
 
         model.eval()
-
+        
+    else:
+        model = None
     state, score, target = env.reset()
-    starting = env.current_state_id
     done = True
-
-    start_time = time.time()
 
     for ep in range(1000):
         state, score, target = env.reset()
+        agent_step = 0
+        starting = env.current_state_id
+
         for step in range(arguments['num_iters']):
             if model is not None:
                 with torch.no_grad():
@@ -128,6 +125,9 @@ def test_multi(testing_scene, rank, shared_model, results, config, arguments=dic
             state, score, reward, done = env.step(action)
             ending = env.current_state_id
             
+            if action < 2:
+                agent_step += 1
+
             if done:                
                 break
 
@@ -136,9 +136,10 @@ def test_multi(testing_scene, rank, shared_model, results, config, arguments=dic
             tm.append(0)
             results[target] = tm
         else:
-            tm = results[target]
-            tm.append(env.shortest[ending, starting] / max(step + 1, env.shortest[ending, starting]))
-            results[target] = tm
+            if max(agent_step, env.shortest[ending, starting]) > 0:
+                tm = results[target]
+                tm.append(env.shortest[ending, starting] / max(agent_step, env.shortest[ending, starting]))
+                results[target] = tm
 
 def live_test(testing_scene, test_objects, shared_model, config, arguments=dict()):
 
@@ -146,10 +147,9 @@ def live_test(testing_scene, test_objects, shared_model, config, arguments=dict(
     if model is not None:
         model.eval()
 
-    # a quick hack to prevent the agent from stucking
-    actions = deque(maxlen=100)
     test_object = np.random.choice(test_objects)
     env = AI2ThorDumpEnv(testing_scene, test_object, config, arguments)
+    print(arguments['angle'])
 
     new_test_object = None
     while 1:
@@ -162,16 +162,18 @@ def live_test(testing_scene, test_objects, shared_model, config, arguments=dict(
         state, score, target = env.reset()
         start = env.current_state_id
         done = True
-        actions.clear()
+        stop = 0
 
         for step in range(arguments['num_iters']):
             ob = env.observations[env.current_state_id]
             
-            cv2.imshow("Live Test", ob[:,:,::-1])
-            time.sleep(0.3)
+            cv2.imshow("Live Test", cv2.resize(ob[:,:,::-1], (400, 400)))
+            time.sleep(0.1)
             k = cv2.waitKey(33) 
+
             if k == ord('r'): # press q to escape
-                new_test_object = np.random.choice(test_objects)
+                new_test_object_id = int(input("Specify target: {}\n".format(list(zip(range(len(test_objects)), test_objects)))))
+                new_test_object = test_objects[new_test_object_id]
                 break
             elif k == ord('q'): # press q to escape
                 sys.exit("End live test.")
@@ -193,16 +195,14 @@ def live_test(testing_scene, test_objects, shared_model, config, arguments=dict(
                 print("Collision occurs.")
             # a quick hack to prevent the agent from stucking
             # i.e. in test mode an agent can repeat an action ad infinitum
-            actions.append(action)
-            if actions.count(actions[0]) == actions.maxlen:
-                # print('In test. Episode over because agent repeated action {} times'.format(
-                                                                                    # actions.maxlen))
-                new_test_object = np.random.choice(test_objects)
-                break
-
-            if done:                
-                new_test_object = np.random.choice(test_objects)
-                break
+        
+            if done: 
+                stop += 1
+                if stop == 2:               
+                    new_test_object_id = int(input("Specify target: {}\n".format(list(zip(range(len(test_objects)), test_objects)))))
+                    new_test_object = test_objects[new_test_object_id]
+                    stop = 0
+                    break
 
         if not done:
             print("Fail")
